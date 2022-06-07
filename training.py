@@ -9,6 +9,7 @@ def train(model, train_dataloader, val_dataloader, criterion, num_epochs=10):
 	optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
 	results_dict = {}	
 
+	print("Calculating initial performance on validation set")
 	eval_results = evaluate(model, val_dataloader, criterion)
 	eval_results['train_loss'] = -1
 	
@@ -16,6 +17,7 @@ def train(model, train_dataloader, val_dataloader, criterion, num_epochs=10):
 
 	epoch_pbar = tqdm(range(num_epochs))
 
+	print("Running training for %s epochs", num_epochs)
 	for epoch in epoch_pbar:
 
 		model.train()
@@ -66,7 +68,7 @@ def evaluate(model, dataloader, criterion):
 		pred_all = torch.Tensor([])
 		y_all = torch.Tensor([])
 
-		for batch in tqdm(dataloader):
+		for batch in dataloader:
 			y = batch[-1]
 			y_all = torch.cat([y_all, y])
 
