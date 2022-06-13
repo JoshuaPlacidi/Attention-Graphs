@@ -44,5 +44,5 @@ class mlp(nn.Module):
 		e = torch.sum(e, dim=1)
 		l = torch.sum(l, dim=1)
 
-		out = self.layers(e)
+		out = self.layers(l)
 		return out
