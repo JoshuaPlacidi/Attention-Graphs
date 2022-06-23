@@ -5,10 +5,13 @@ import torch_geometric.transforms as T
 
 from torch.utils.data import Dataset, DataLoader
 
-class proteins_dataset(Dataset):
-	def __init__(self, graph, indices=None):	
-		self.adj_row, self.adj_col, self.adj_val = graph.adj_t.coo()
 
+##### temp 
+import time
+
+class tensor_dataset(Dataset):
+	def __init__(self, graph, indices):	
+		self.adj_row, self.adj_col, self.adj_val = graph.adj_t.coo()
 		self.y = graph.y
 		self.indices = indices
 
@@ -20,9 +23,7 @@ class proteins_dataset(Dataset):
 		i = self.indices[idx]
 
 		# get the edge indices for datapoint i
-	#	print('run', i.item(), end=' - ')
 		edge_indices = (self.adj_row==i).nonzero().squeeze()
-	#	print('complete')
 
 		# get features for edges
 		edge_features = torch.index_select(self.adj_val, 0, edge_indices)
@@ -37,20 +38,54 @@ class proteins_dataset(Dataset):
 		pad = (0, 0, 0, pad_to-edge_features.shape[0])
 		edge_features = torch.nn.functional.pad(edge_features, pad, "constant", 0)
 		neighbour_labels = torch.nn.functional.pad(neighbour_labels, pad, "constant", 0)	
-
+		
 		return edge_features, neighbour_labels, self.y[i]
 
+class graph_dataset(Dataset):
+	def __init__(self, graph, indicies):
+		self.edges = graph.adj_t
+		self.y = graph.y
+		self.indices = indicies
 
-def get_proteins_data_dict():
-	dataset = PygNodePropPredDataset(name='ogbn-proteins', transform=T.ToSparseTensor(attr='edge_attr'), root="/Users/joshua/dev/datasets")
+	def __len__(self):
+		return len(self.indices)
+
+	def __getitem__(self, idx):
+		i = self.indices[idx]
+		return self.edges[i], self.y[i]
+
+
+def get_graph():
+	dataset = PygNodePropPredDataset(name='ogbn-proteins', transform=T.ToSparseTensor(attr='edge_attr'), root="/Users/joshua/env/datasets")
+	split_idx = dataset.get_idx_split()
+
+	graph = dataset[0]
+	graph.x = graph.adj_t.mean(dim=1)
+	graph.adj_t.set_value_(None)	
+
+	return graph, split_idx
+
+
+def get_proteins_data_dicts(batch_size=32, return_graph_dataset=False):
+	dataset = PygNodePropPredDataset(name='ogbn-proteins', transform=T.ToSparseTensor(attr='edge_attr'), root="/Users/joshua/env/datasets")
 	graph = dataset[0]
 
 	split_idx = dataset.get_idx_split()
-	train_idx, val_idx, test_idx = split_idx["train"], split_idx["valid"], split_idx["test"]
+	data_dict = {}
 
-	data_dict = {
-		'train': DataLoader(proteins_dataset(graph, indices=train_idx), batch_size=32, shuffle=True, num_workers=0),
-		'val': DataLoader(proteins_dataset(graph, indices=val_idx), batch_size=32, shuffle=True, num_workers=0),
-		'test': DataLoader(proteins_dataset(graph, indices=test_idx), batch_size=32, shuffle=True, num_workers=0)
-	}
-	return data_dict
+	sample_sets = ['train', 'valid', 'test']
+	
+	if return_graph_dataset:
+		return get_graph_data(graph), split_idx
+
+	else:
+
+		for s in sample_sets:
+			data_dict[s] = DataLoader(
+								dataset(graph, indices=split_idx[s]),
+								batch_size=batch_size,
+								shuffle=True,
+								num_workers=0
+							)
+	
+		return data_dict

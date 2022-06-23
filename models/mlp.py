@@ -42,7 +42,7 @@ class mlp(nn.Module):
 
 	def forward(self, e, l):
 		e = torch.sum(e, dim=1)
-		l = torch.sum(l, dim=1)
+		l = torch.sum(l, dim=1).float()
 
 		out = self.layers(l)
 		return out
