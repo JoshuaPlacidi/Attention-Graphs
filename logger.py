@@ -1,7 +1,10 @@
 import torch
 import json
 import matplotlib.pyplot as plt
+import numpy as np
 from collections import defaultdict
+import itertools
+
 
 class Logger(object):
 	def __init__(self, info=None):
@@ -74,40 +77,104 @@ class Logger(object):
 		fig.tight_layout()
 		plt.savefig(filepath, format='eps')
 			
+	def plot_hyperparam_search(self, filepath):
+		with open(filepath) as json_file:
+			hyperparam_logs = json.load(json_file)
+		
+		params = defaultdict(list)
+		score = []
+
+		for log in hyperparam_logs:
+
+			for k, v in log['info'].items():
+				params[k].append(v)
+#			params['lr'].append(log['lr'][0])
+			score.append(max(log['valid_roc']))
+
+		for p in params.keys():
+#			print(p)
+#			print(params[p])
+			plt.scatter(params[p], score)
+			plt.title(p)
+			plt.xlabel(p)
+			plt.ylabel('valid roc')
+			plt.ylim(0,1)
+#			plt.savefig(p + '.eps', format='eps')	
+			plt.show()
 
 	def print(self, run=None):
-		if run is not None:
-			return
-		return
+		runs = self.logs['run']
+		num_runs = max(runs)
 
-	def print_statistics(self, run=None):
-		if run is not None:
-			result = 100 * torch.tensor(self.results[run])
-			argmax = result[:, 1].argmax().item()
-			print(f'Run {run + 1:02d}:')
-			print(f'Highest Train: {result[:, 0].max():.2f}')
-			print(f'Highest Valid: {result[:, 1].max():.2f}')
-			print(f'  Final Train: {result[argmax, 0]:.2f}')
-			print(f'   Final Test: {result[argmax, 2]:.2f}')
+		train_losses, train_rocs = [], []
+		valid_losses, valid_rocs = [], []
+
+		for r in range(1, num_runs+1):
+			run_start = runs.index(r)
+			run_end = len(runs) - runs[::-1].index(r) - 1
+
+			best_idx = min(
+				range(len(self.logs['valid_loss'][run_start:run_end+1])),
+				key=self.logs['valid_loss'][run_start:run_end+1].__getitem__
+			)
+
+			train_losses.append(self.logs['train_loss'][run_start:run_end+1][best_idx])
+			train_rocs.append(self.logs['train_roc'][run_start:run_end+1][best_idx])
+			valid_losses.append(self.logs['valid_loss'][run_start:run_end+1][best_idx])
+			valid_rocs.append(self.logs['valid_roc'][run_start:run_end+1][best_idx])
+
+		print('Results from {0} runs'.format(num_runs))
+		print('Train mean loss {0} +/- {1}'.format(np.mean(train_losses), np.std(train_losses)))
+		print('Train mean roc  {0} +/- {1}'.format(np.mean(train_rocs), np.std(train_rocs)))
+		print('Valid mean loss {0} +/- {1}'.format(np.mean(valid_losses), np.std(valid_losses)))
+		print('Valid mean roc  {0} +/- {1}'.format(np.mean(valid_rocs), np.std(valid_rocs)))
+
+	def load(self, filepath):
+		with open(filepath) as fp:
+			self.logs = json.load(fp)
+	
+	def plot(self):
+		runs = self.logs['run']
+		num_runs = max(runs)
+		
+		if num_runs > 1: # if more than 1 run in logs then plot means
+
+			fig = plt.figure(figsize=(14, 6.5), dpi=80)
+
+			losses = []
+
+			for r in range(1, num_runs+1):
+				run_start = runs.index(r)
+				run_end = len(runs) - runs[::-1].index(r) - 1
+				run_valid_loss = self.logs['valid_loss'][run_start:run_end+1]				
+
+				losses.append(run_valid_loss)
+				plt.plot(
+					range(0, run_end - run_start + 1), 
+					run_valid_loss,
+					color="lightgrey"
+				)
+
+			epoch_loss = list(map(list, itertools.zip_longest(*losses, fillvalue=None)))
+			epoch_loss[2].append(None)
+			
+			for e in range(len(epoch_loss)):
+				epoch_loss[e] = [l for l in epoch_loss[e] if l is not None]
+
+			mean_epoch_loss = list(map(np.mean, epoch_loss))
+
+			plt.plot(range(0, max(self.logs['epoch'])), mean_epoch_loss)
+			plt.show()
+
 		else:
-			result = 100 * torch.tensor(self.results)
+			raise('plot need more runs')
 
-			best_results = []
-			for r in result:
-				train1 = r[:, 0].max().item()
-				valid = r[:, 1].max().item()
-				train2 = r[r[:, 1].argmax(), 0].item()
-				test = r[r[:, 1].argmax(), 2].item()
-				best_results.append((train1, valid, train2, test))
 
-			best_result = torch.tensor(best_results)
 
-			print(f'All runs:')
-			r = best_result[:, 0]
-			print(f'Highest Train: {r.mean():.2f} ± {r.std():.2f}')
-			r = best_result[:, 1]
-			print(f'Highest Valid: {r.mean():.2f} ± {r.std():.2f}')
-			r = best_result[:, 2]
-			print(f'  Final Train: {r.mean():.2f} ± {r.std():.2f}')
-			r = best_result[:, 3]
-			print(f'   Final Test: {r.mean():.2f} ± {r.std():.2f}')
+
+
+
+
+
+
+

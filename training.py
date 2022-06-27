@@ -5,6 +5,7 @@ from logger import Logger
 import numpy as np 
 import json
 import random
+from torch_scatter import scatter
 
 def train(model, train_dataloader, val_dataloader, criterion, num_epochs=10):
 
@@ -94,6 +95,14 @@ class GraphTrainer():
 		self.split_idx = split_idx
 		self.evaluator = Evaluator(name='ogbn-proteins')
 
+		x = scatter(graph.edge_attr, graph.edge_index[0], dim=0, dim_size=graph.num_nodes, reduce='mean')
+		
+		emb = torch.load('embedding.pt', map_location='cpu')
+		x = torch.cat([x, emb], dim=-1)
+		
+		self.graph.x = x
+		self.graph.adj_t = 0
+
 	def normalise(self):
 		adj_t = self.graph.adj_t.set_diag()
 		deg = adj_t.sum(dim=1).to(torch.float)
@@ -102,17 +111,21 @@ class GraphTrainer():
 		adj_t = deg_inv_sqrt.view(-1, 1) * adj_t * deg_inv_sqrt.view(1, -1)
 		self.graph.adj_t = adj_t
 		
-	def train(self, model, criterion, runs=1, num_epochs=10, lr=1e-3, use_scheduler=True, save_log=False):
+	def train(self, model, criterion, num_runs=1, num_epochs=10, lr=1e-3, use_scheduler=True, save_log=False):
 		torch.manual_seed(0)
 
+		info = model.param_dict
+		info['num_runs'], info['lr'], info['num_epochs'], info['use_scheduler'] = num_runs, lr, num_epochs, use_scheduler
+		print('Training config: {0}'.format(info))
 		logger = Logger(info=model.param_dict)
-		for run in range(1, runs+1):
+
+		for run in range(1, num_runs+1):
 			print('R' + str(run))
 			model.reset_parameters()
 			optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
 			if use_scheduler:
-				scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, min_lr=1e-9, cooldown=7)
+				scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, threshold=2e-4, factor=0.1, cooldown=5, min_lr=1e-9)
 
 
 			epoch_bar = tqdm(range(1, num_epochs+1))
@@ -131,11 +144,16 @@ class GraphTrainer():
 						*[(results_dict[s]['loss'], results_dict[s]['roc']) for s in ['train','valid']])
 					)
 
-				scheduler.step(results_dict['valid']['loss'])
+				if use_scheduler:
+					scheduler.step(results_dict['valid']['loss'])
+
+				if current_lr <= 1e-7:
+					break
 
 		if save_log:
-			logger.save("log.json")
-			logger.plot("plot.eps")
+			logger.save("logs/log.json".format(run))
+#			logger.plot("plot.eps")
+			logger.print()
 		
 		return logger.logs 
 
@@ -189,7 +207,7 @@ class GraphTrainer():
 			params = {}
 			for p in param_types:
 
-				if p == 'lr':
+				if False:#p == 'lr':
 					value = random.choice([1e-1, 1e-2, 1e-3, 1e-4])
 					value = value * np.random.uniform(1, 9, 1)[0]
 				else:
@@ -198,11 +216,11 @@ class GraphTrainer():
 				if p == 'hid_dim' or p == 'layers': value = int(value)
 				params[p] = value
 
-			print('S {0}/{1}: {2}'.format(search, num_searches, params))
+			print('S {0}/{1}'.format(search, num_searches))
 			m = model(in_dim=self.graph.num_features, hid_dim=params['hid_dim'], out_dim=112,
 						num_layers=params['layers'], dropout=params['dropout'])
 
-			m_log = self.train(m, criterion, num_epochs=100, lr=params['lr'], save_log=True)
+			m_log = self.train(m, criterion, num_epochs=200, lr=params['lr'], save_log=True)
 			logs.append(m_log)
 			
 			m_loss = min(m_log['valid_loss'])

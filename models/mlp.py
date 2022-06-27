@@ -3,9 +3,9 @@ import torch.nn as nn
 import math
 from collections import OrderedDict
 
-class mlp(nn.Module):
-	def __init__(self, input_size, hidden_size, out_size,
-				 data_src=None, num_layers=1, dropout_p=0.0):
+class MLP(nn.Module):
+	def __init__(self, in_dim, hid_dim, out_dim,
+				 data_src=None, num_layers=1, dropout=0.0):
 		"""Constructor for MLP.
 		Args:
 			input_size: The number of input dimensions.
@@ -14,35 +14,37 @@ class mlp(nn.Module):
 			num_layers: The number of hidden layers.
 			dropout_p: Dropout probability.
 		"""
-		super(mlp, self).__init__()
-		self.input_size = input_size
-		self.hidden_size = hidden_size
-		self.out_size = out_size
+		super(MLP, self).__init__()
+		self.param_dict = {'in_dim':in_dim, 'hid_dim':hid_dim,
+							'out_dim': out_dim, 'dropout':dropout}
 
 		layers = []
 		for i in range(num_layers):
-			idim = hidden_size
-			odim = hidden_size
+			idim = hid_dim
+			odim = hid_dim
 			if i == 0:
-				idim = input_size
+				idim = in_dim
 			if i == num_layers-1:
-				odim = out_size
+				odim = out_dim
 			fc = nn.Linear(idim, odim)
 			fc.weight.data.normal_(0.0,  math.sqrt(2. / idim))
 			fc.bias.data.fill_(0)
 			layers.append(('fc'+str(i), fc))
 			if i != num_layers-1:
 				layers.append(('relu'+str(i), nn.ReLU()))
-				layers.append(('dropout'+str(i), nn.Dropout(p=dropout_p)))
+				layers.append(('dropout'+str(i), nn.Dropout(p=dropout)))
 		
 		self.layers = nn.Sequential(OrderedDict(layers))
+		self.sigmoid = nn.Sigmoid()
+
+	def reset_parameters(self):
+		for layer in self.layers:
+			if isinstance(layer, nn.Linear):
+				layer.reset_parameters()
 
 	def params_to_train(self):
 		return self.layers.parameters()
 
-	def forward(self, e, l):
-		e = torch.sum(e, dim=1)
-		l = torch.sum(l, dim=1).float()
-
-		out = self.layers(l)
-		return out
+	def forward(self, x, adj_t):
+		x = self.layers(x)
+		return x

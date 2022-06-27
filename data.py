@@ -5,10 +5,6 @@ import torch_geometric.transforms as T
 
 from torch.utils.data import Dataset, DataLoader
 
-
-##### temp 
-import time
-
 class tensor_dataset(Dataset):
 	def __init__(self, graph, indices):	
 		self.adj_row, self.adj_col, self.adj_val = graph.adj_t.coo()
@@ -56,12 +52,12 @@ class graph_dataset(Dataset):
 
 
 def get_graph():
-	dataset = PygNodePropPredDataset(name='ogbn-proteins', transform=T.ToSparseTensor(attr='edge_attr'), root="/Users/joshua/env/datasets")
+	dataset = PygNodePropPredDataset(name='ogbn-proteins', root="/Users/joshua/env/datasets")#, transform=T.ToSparseTensor(attr='edge_attr'))
 	split_idx = dataset.get_idx_split()
 
 	graph = dataset[0]
-	graph.x = graph.adj_t.mean(dim=1)
-	graph.adj_t.set_value_(None)	
+#	graph.x = graph.adj_t.mean(dim=1)
+#	graph.adj_t.set_value_(None)	
 
 	return graph, split_idx
 
