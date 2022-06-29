@@ -7,103 +7,35 @@ import json
 import random
 from torch_scatter import scatter
 
-def train(model, train_dataloader, val_dataloader, criterion, num_epochs=10):
-
-	optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
-	results_dict = {}	
-
-	print("Calculating initial performance on validation set")
-	eval_results = evaluate(model, val_dataloader, criterion)
-	eval_results['train_loss'] = -1
-	
-	results_dict['0'] = eval_results
-
-	epoch_pbar = tqdm(range(num_epochs))
-
-	print("Running training for %s epochs", num_epochs)
-	for epoch in epoch_pbar:
-
-		model.train()
-		for batch in train_dataloader:
-			y = batch[-1]
-			pred = model(*batch[:-1])
-
-			loss = criterion(pred, y.float())
-			loss.backward()
-			optimizer.step()
-			model.zero_grad()
-
-		epoch_results = {}
-		train_results = evaluate(model, train_dataloader, criterion)
-		epoch_results['train_rocauc'] = train_results['rocauc'] 
-		epoch_results['train_loss'] = train_results['loss']
-		
-		
-		val_results = evaluate(model, val_dataloader, criterion)
-		epoch_results['val_rocauc'] = val_results['rocauc']
-		epoch_results['val_loss'] = val_results['loss']
-	
-		epoch_pbar.set_description(
-			"Epoch %s: train loss %s, train rocauc %s, val loss %s, val rocauc %s" % 
-			tuple([round(x,3) for x in [epoch, epoch_results['train_loss'], epoch_results['train_rocauc'], epoch_results['val_loss'], epoch_results['val_rocauc']]])
-			)
-		results_dict[str(epoch)] = epoch_results
-
-	print(results_dict)
-	process_results(results_dict)
-
-def process_results(results_dict):
-	best_val_loss = results_dict[list(results_dict.keys())[0]]['val_loss']
-	best_epoch = '0'
-
-	for epoch_str, result in results_dict.items():
-		if result['val_loss'] < best_val_loss:
-			best_val_loss = result['val_loss']
-			best_epoch = epoch_str
-
-	print("Best model (epoch %s):\n" % (best_epoch), results_dict[best_epoch])
-
-def evaluate(model, dataloader, criterion):
-	with torch.no_grad():
-
-		model.eval()
-		running_loss = 0
-		pred_all = torch.Tensor([])
-		y_all = torch.Tensor([])
-
-		for batch in dataloader:
-			y = batch[-1]
-			y_all = torch.cat([y_all, y])
-
-			pred = model(*batch[:-1])
-			pred_all = torch.cat([pred_all, pred])			
-
-			loss = criterion(pred, y.float())
-			running_loss += loss
-
-		eval_dict = {"y_true":y_all, "y_pred":pred_all}
-		eval_results = evaluator.eval(eval_dict)	
-
-		eval_results['loss'] = running_loss.item() / len(dataloader)
-
-		return eval_results	
-
-
 class GraphTrainer():
+	'''
+	Class for full batch graph training 
+	'''
 	def __init__(self, graph, split_idx):
+		'''
+		params:
+			- graph dataset
+			- dictionary for storing the sample splits (train | valid | test) indexes
+		'''
 		self.graph = graph
 		self.split_idx = split_idx
 		self.evaluator = Evaluator(name='ogbn-proteins')
 
+		# aggregate edge features using mean
 		x = scatter(graph.edge_attr, graph.edge_index[0], dim=0, dim_size=graph.num_nodes, reduce='mean')
 		
-		emb = torch.load('embedding.pt', map_location='cpu')
-		x = torch.cat([x, emb], dim=-1)
+		# use node2vec embeddings
+		# emb = torch.load('embedding.pt', map_location='cpu')
+		# x = torch.cat([x, emb], dim=-1)
 		
+		# set feature variables
 		self.graph.x = x
 		self.graph.adj_t = 0
 
 	def normalise(self):
+		'''
+		normalise the graph for graph convolution calculation
+		'''
 		adj_t = self.graph.adj_t.set_diag()
 		deg = adj_t.sum(dim=1).to(torch.float)
 		deg_inv_sqrt = deg.pow(-0.5)
@@ -111,27 +43,48 @@ class GraphTrainer():
 		adj_t = deg_inv_sqrt.view(-1, 1) * adj_t * deg_inv_sqrt.view(1, -1)
 		self.graph.adj_t = adj_t
 		
-	def train(self, model, criterion, num_runs=1, num_epochs=10, lr=1e-3, use_scheduler=True, save_log=False):
-		torch.manual_seed(0)
 
+	def train(self, model, criterion, num_runs=1, num_epochs=10, lr=1e-3, use_scheduler=True, save_log=False):
+		'''
+		train a model in full batch graph mode
+		params:
+			- model: PyTorch model to train
+			- criterion: object to calculate loss between model predictions and targets
+			- num_runs: number of runs of training to complete, model params are reset between runs
+			- num_epochs: number of epochs to train for in each run
+			- lr: initial learning rate
+			- use_scheduler: whether to incremently decrease learning rate or not
+			- save_log: if model logs should be saved to file
+		returns:
+			Logger object with logs of the total training cycle
+		'''
+
+		# store model and training information and save it in the logger
 		info = model.param_dict
 		info['num_runs'], info['lr'], info['num_epochs'], info['use_scheduler'] = num_runs, lr, num_epochs, use_scheduler
 		print('Training config: {0}'.format(info))
 		logger = Logger(info=model.param_dict)
 
+		# perform a new training experiement for each run, reseting the model parameters each time
 		for run in range(1, num_runs+1):
 			print('R' + str(run))
+
+			# reset the model parameters
 			model.reset_parameters()
 			optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
+			# define scheduler
 			if use_scheduler:
 				scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, threshold=2e-4, factor=0.1, cooldown=5, min_lr=1e-9)
 
 
 			epoch_bar = tqdm(range(1, num_epochs+1))
 			for epoch in epoch_bar:
-				loss = self.train_pass(model, optimizer, criterion)
+
+				# perform a train pass, with all graph data
+				_ = self.train_pass(model, optimizer, criterion)
 				
+				# construct a results dictionary to store training parameters and model performance metrics
 				results_dict = self.test(model, criterion)
 				results_dict['run'] = run
 				results_dict['epoch'] = epoch
@@ -144,25 +97,40 @@ class GraphTrainer():
 						*[(results_dict[s]['loss'], results_dict[s]['roc']) for s in ['train','valid']])
 					)
 
+
 				if use_scheduler:
 					scheduler.step(results_dict['valid']['loss'])
 
-				if current_lr <= 1e-7:
-					break
+					# exit training if the learning rate drops to low
+					if current_lr <= 1e-7:
+						break
 
+		logger.print()
+
+		# save logs files
 		if save_log:
 			logger.save("logs/log.json".format(run))
-#			logger.plot("plot.eps")
-			logger.print()
-		
-		return logger.logs 
+
+		return logger
+
 
 	def train_pass(self, model, optimizer, criterion):
+		'''
+		pass full graph through model and update weights
+		params:
+			- model: PyTorch model to train
+			- optimizer: optimizer to use to update weights
+			- criterion: object to calculate loss between target and model output
+		returns:
+			Float of loss of the model on the train set
+		'''
 		model.train()
 		optimizer.zero_grad()
 
+		# calculate output
 		out = model(self.graph.x, self.graph.adj_t)[self.split_idx['train']]
 
+		# update weights
 		loss = criterion(out, self.graph.y[self.split_idx['train']].to(torch.float))
 		loss.backward()
 		optimizer.step()
@@ -170,12 +138,23 @@ class GraphTrainer():
 		return loss.item()
 			
 		
+
 	def test(self, model, criterion, save_path=None):
+		'''
+		perform a test evaluation of a model on full graph
+		params:
+			- model: model to evaluate
+			- criterion: object to calculate loss between target and model output
+			- save_path (optional): if provided the complete y_pred output will be stored at this file location
+		returns:
+			Dictionary object containing the results from test pass
+		'''
 		with torch.no_grad():
 			model.eval()
 				
 			y_pred = model(self.graph.x, self.graph.adj_t)
 
+			# loop over each sample set (train | valid | test) and calculate loss and ROC
 			results_dict = {}
 			for s in ['train', 'valid', 'test']:
 				loss = criterion(
@@ -187,6 +166,7 @@ class GraphTrainer():
 									'y_pred': y_pred[self.split_idx[s]],
 								})['rocauc']
 
+				# store values in dictionary
 				results_dict[s] = {'loss':round(loss,3), 'roc':round(roc,3)}
 		
 			if save_path:
@@ -195,45 +175,144 @@ class GraphTrainer():
 		return results_dict
 
 	def hyperparam_search(self, model, param_dict, criterion=torch.nn.BCEWithLogitsLoss(), num_searches=10):
+		'''
+		performs a hyperparameter search over a range of values, each search randomly selects
+		values from each parameters specified range
+		params:
+			- model: uninitialised model object to run search on
+			- param_dict: a dictionary with keys of parameters and values of their search ranges
+			- criterion: method to evaluate model loss
+			- num_searches: how many hyperparamet searches to run
+		'''
 		param_types = ['lr', 'hid_dim', 'layers', 'dropout']
 		assert set(param_dict.keys()) == set(param_types)
 
+		# define variables for storing log information and keeping track of the best parameters
 		logs = []
-		
 		best_loss = 1000
 		best_params = {}
 
+		# for each search: initialise a model with hyperparameters and evaluate its performance
 		for search in range(num_searches):
+
+			# dictionary to store the sampled hyperparams for this search
 			params = {}
+
+			# for each param uniformly sample from its range
 			for p in param_types:
 
-				if False:#p == 'lr':
-					value = random.choice([1e-1, 1e-2, 1e-3, 1e-4])
-					value = value * np.random.uniform(1, 9, 1)[0]
-				else:
-					value = np.random.uniform(param_dict[p][0], param_dict[p][1], 1)[0]
-
+				value = np.random.uniform(param_dict[p][0], param_dict[p][1], 1)[0]
+				
+				# convert the value to an int if nessassary
 				if p == 'hid_dim' or p == 'layers': value = int(value)
+
 				params[p] = value
 
 			print('S {0}/{1}'.format(search, num_searches))
+
+			# initialise a modle with sample hyperparameters
 			m = model(in_dim=self.graph.num_features, hid_dim=params['hid_dim'], out_dim=112,
 						num_layers=params['layers'], dropout=params['dropout'])
 
-			m_log = self.train(m, criterion, num_epochs=200, lr=params['lr'], save_log=True)
-			logs.append(m_log)
+			# initialise training strategy with sampled hyperparameters
+			m_logger = self.train(m, criterion, num_epochs=200, lr=params['lr'], save_log=True)
+			logs.append(m_logger.logs)
 			
-			m_loss = min(m_log['valid_loss'])
+			# if model is best so far, save its parameters
+			m_loss = min(m_logger.logs['valid_loss'])
 			if m_loss < best_loss:
 				best_loss = m_loss
 				best_params = params
 			
+			# store hyperparamet logs
 			with open('hyperparam_search.json', 'w') as fp:
 				json.dump(logs, fp)
 
-
-		print('Best Params:', params, ' with best loss:', best_loss)
-
-
+		# print results
+		print('Best Params:', best_params, ' with best loss:', best_loss)
 
 
+
+
+
+
+# def train(model, train_dataloader, val_dataloader, criterion, num_epochs=10):
+
+# 	optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
+# 	results_dict = {}	
+
+# 	print("Calculating initial performance on validation set")
+# 	eval_results = evaluate(model, val_dataloader, criterion)
+# 	eval_results['train_loss'] = -1
+	
+# 	results_dict['0'] = eval_results
+
+# 	epoch_pbar = tqdm(range(num_epochs))
+
+# 	print("Running training for %s epochs", num_epochs)
+# 	for epoch in epoch_pbar:
+
+# 		model.train()
+# 		for batch in train_dataloader:
+# 			y = batch[-1]
+# 			pred = model(*batch[:-1])
+
+# 			loss = criterion(pred, y.float())
+# 			loss.backward()
+# 			optimizer.step()
+# 			model.zero_grad()
+
+# 		epoch_results = {}
+# 		train_results = evaluate(model, train_dataloader, criterion)
+# 		epoch_results['train_rocauc'] = train_results['rocauc'] 
+# 		epoch_results['train_loss'] = train_results['loss']
+		
+		
+# 		val_results = evaluate(model, val_dataloader, criterion)
+# 		epoch_results['val_rocauc'] = val_results['rocauc']
+# 		epoch_results['val_loss'] = val_results['loss']
+	
+# 		epoch_pbar.set_description(
+# 			"Epoch %s: train loss %s, train rocauc %s, val loss %s, val rocauc %s" % 
+# 			tuple([round(x,3) for x in [epoch, epoch_results['train_loss'], epoch_results['train_rocauc'], epoch_results['val_loss'], epoch_results['val_rocauc']]])
+# 			)
+# 		results_dict[str(epoch)] = epoch_results
+
+# 	print(results_dict)
+# 	process_results(results_dict)
+
+# def process_results(results_dict):
+# 	best_val_loss = results_dict[list(results_dict.keys())[0]]['val_loss']
+# 	best_epoch = '0'
+
+# 	for epoch_str, result in results_dict.items():
+# 		if result['val_loss'] < best_val_loss:
+# 			best_val_loss = result['val_loss']
+# 			best_epoch = epoch_str
+
+# 	print("Best model (epoch %s):\n" % (best_epoch), results_dict[best_epoch])
+
+# def evaluate(model, dataloader, criterion):
+# 	with torch.no_grad():
+
+# 		model.eval()
+# 		running_loss = 0
+# 		pred_all = torch.Tensor([])
+# 		y_all = torch.Tensor([])
+
+# 		for batch in dataloader:
+# 			y = batch[-1]
+# 			y_all = torch.cat([y_all, y])
+
+# 			pred = model(*batch[:-1])
+# 			pred_all = torch.cat([pred_all, pred])			
+
+# 			loss = criterion(pred, y.float())
+# 			running_loss += loss
+
+# 		eval_dict = {"y_true":y_all, "y_pred":pred_all}
+# 		eval_results = evaluator.eval(eval_dict)	
+
+# 		eval_results['loss'] = running_loss.item() / len(dataloader)
+
+# 		return eval_results	
