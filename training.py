@@ -1,10 +1,12 @@
+from tkinter import W
 import torch
 from tqdm import tqdm
 from ogb.nodeproppred import Evaluator
 from logger import Logger
 import numpy as np 
 import json
-import random
+from torch_geometric.loader import NeighborLoader
+import torch_geometric.transforms as T
 from torch_scatter import scatter
 
 class GraphTrainer():
@@ -17,21 +19,32 @@ class GraphTrainer():
 			- graph dataset
 			- dictionary for storing the sample splits (train | valid | test) indexes
 		'''
+#		graph.num_nodes = torch.tensor(graph.num_nodes)
 		self.graph = graph
 		self.split_idx = split_idx
 		self.evaluator = Evaluator(name='ogbn-proteins')
 
 		# aggregate edge features using mean
 		x = scatter(graph.edge_attr, graph.edge_index[0], dim=0, dim_size=graph.num_nodes, reduce='mean')
-		
+		self.graph.x = x
 		# use node2vec embeddings
 		# emb = torch.load('embedding.pt', map_location='cpu')
 		# x = torch.cat([x, emb], dim=-1)
 		
+		self.transforms = T.Compose([T.ToSparseTensor(remove_edge_index=False)])
+		self.graph = self.transforms(self.graph)
+		
 		# set feature variables
-		self.graph.x = x
-		self.graph.adj_t = 0
-
+		self.train_loader = NeighborLoader(
+								self.graph,
+								num_neighbors=[10,5],
+								batch_size=64,
+								directed=False,
+								shuffle=True,
+								input_nodes=split_idx['train'],
+								transform=self.transforms,
+		)
+		
 	def normalise(self):
 		'''
 		normalise the graph for graph convolution calculation
@@ -80,8 +93,7 @@ class GraphTrainer():
 
 			epoch_bar = tqdm(range(1, num_epochs+1))
 			for epoch in epoch_bar:
-
-				# perform a train pass, with all graph data
+				# perform a train pass
 				_ = self.train_pass(model, optimizer, criterion)
 				
 				# construct a results dictionary to store training parameters and model performance metrics
@@ -93,7 +105,7 @@ class GraphTrainer():
 				logger.log(results_dict)
 
 				epoch_bar.set_description(
-					"E {0}, LR {1}, T{2}, V{3}".format(epoch, round(current_lr,6),
+					"E {0}: LR({1}), T{2}, V{3}".format(epoch, round(current_lr,9),
 						*[(results_dict[s]['loss'], results_dict[s]['roc']) for s in ['train','valid']])
 					)
 
@@ -125,17 +137,19 @@ class GraphTrainer():
 			Float of loss of the model on the train set
 		'''
 		model.train()
-		optimizer.zero_grad()
 
-		# calculate output
-		out = model(self.graph.x, self.graph.adj_t)[self.split_idx['train']]
+		for batch in self.train_loader:
+			optimizer.zero_grad()
 
-		# update weights
-		loss = criterion(out, self.graph.y[self.split_idx['train']].to(torch.float))
-		loss.backward()
-		optimizer.step()
+			# calculate output
+			out = model(batch)
 
-		return loss.item()
+			# update weights
+			loss = criterion(out, batch.y.to(torch.float))
+			loss.backward()
+			optimizer.step()
+
+		return
 			
 		
 
@@ -152,7 +166,7 @@ class GraphTrainer():
 		with torch.no_grad():
 			model.eval()
 				
-			y_pred = model(self.graph.x, self.graph.adj_t)
+			y_pred = model(self.graph)
 
 			# loop over each sample set (train | valid | test) and calculate loss and ROC
 			results_dict = {}
@@ -236,83 +250,3 @@ class GraphTrainer():
 
 
 
-# def train(model, train_dataloader, val_dataloader, criterion, num_epochs=10):
-
-# 	optimizer = torch.optim.AdamW(model.parameters(), lr=0.0001)
-# 	results_dict = {}	
-
-# 	print("Calculating initial performance on validation set")
-# 	eval_results = evaluate(model, val_dataloader, criterion)
-# 	eval_results['train_loss'] = -1
-	
-# 	results_dict['0'] = eval_results
-
-# 	epoch_pbar = tqdm(range(num_epochs))
-
-# 	print("Running training for %s epochs", num_epochs)
-# 	for epoch in epoch_pbar:
-
-# 		model.train()
-# 		for batch in train_dataloader:
-# 			y = batch[-1]
-# 			pred = model(*batch[:-1])
-
-# 			loss = criterion(pred, y.float())
-# 			loss.backward()
-# 			optimizer.step()
-# 			model.zero_grad()
-
-# 		epoch_results = {}
-# 		train_results = evaluate(model, train_dataloader, criterion)
-# 		epoch_results['train_rocauc'] = train_results['rocauc'] 
-# 		epoch_results['train_loss'] = train_results['loss']
-		
-		
-# 		val_results = evaluate(model, val_dataloader, criterion)
-# 		epoch_results['val_rocauc'] = val_results['rocauc']
-# 		epoch_results['val_loss'] = val_results['loss']
-	
-# 		epoch_pbar.set_description(
-# 			"Epoch %s: train loss %s, train rocauc %s, val loss %s, val rocauc %s" % 
-# 			tuple([round(x,3) for x in [epoch, epoch_results['train_loss'], epoch_results['train_rocauc'], epoch_results['val_loss'], epoch_results['val_rocauc']]])
-# 			)
-# 		results_dict[str(epoch)] = epoch_results
-
-# 	print(results_dict)
-# 	process_results(results_dict)
-
-# def process_results(results_dict):
-# 	best_val_loss = results_dict[list(results_dict.keys())[0]]['val_loss']
-# 	best_epoch = '0'
-
-# 	for epoch_str, result in results_dict.items():
-# 		if result['val_loss'] < best_val_loss:
-# 			best_val_loss = result['val_loss']
-# 			best_epoch = epoch_str
-
-# 	print("Best model (epoch %s):\n" % (best_epoch), results_dict[best_epoch])
-
-# def evaluate(model, dataloader, criterion):
-# 	with torch.no_grad():
-
-# 		model.eval()
-# 		running_loss = 0
-# 		pred_all = torch.Tensor([])
-# 		y_all = torch.Tensor([])
-
-# 		for batch in dataloader:
-# 			y = batch[-1]
-# 			y_all = torch.cat([y_all, y])
-
-# 			pred = model(*batch[:-1])
-# 			pred_all = torch.cat([pred_all, pred])			
-
-# 			loss = criterion(pred, y.float())
-# 			running_loss += loss
-
-# 		eval_dict = {"y_true":y_all, "y_pred":pred_all}
-# 		eval_results = evaluator.eval(eval_dict)	
-
-# 		eval_results['loss'] = running_loss.item() / len(dataloader)
-
-# 		return eval_results	

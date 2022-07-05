@@ -1,9 +1,12 @@
 import torch
-from data import get_graph
+from data import get_graph_data
 from models.mlp import MLP
-from models.gnn import GCN, SAGE
-from training import train, GraphTrainer
+from models.gnn import GNN
+from training import GraphTrainer
 from logger import Logger
+
+torch.manual_seed(0)
+
 
 #l = Logger()
 #l.load('logs/log.json')
@@ -22,16 +25,16 @@ from logger import Logger
 
 #train(model, data_dict['train'], data_dict['valid'], criterion, num_epochs=200)
 
-graph_data, split_idx = get_graph()
+graph, split_idx = get_graph_data()
 
-
-trainer = GraphTrainer(graph_data, split_idx)
+trainer = GraphTrainer(graph, split_idx)
 #trainer.normalise()
 criterion = torch.nn.BCEWithLogitsLoss()
 
-#model = SAGE(graph_data.num_features, 309, 112, 1, 0.1)
-#model = GCN(graph_data.num_features, 256, 112, 3, 0.15)
-model = MLP(trainer.graph.x.size(-1), 256, 112, num_layers=3, dropout=0.5)
+#model = SAGE(trainer.graph.x.size(-1), 309, 112, 1, 0.1)
+#model = GCN(trainer.graph.x.size(-1), 256, 112, 3, 0.15)
+#model = MLP(trainer.graph.x.size(-1), 256, 112, num_layers=3, dropout=0.5)
+model = GNN('TransformerConv', trainer.graph.x.size(-1), 300, 112, 1, 0.1)
 
 trainer.train(model, criterion, num_epochs=300, lr=0.01, save_log=True, num_runs=10, use_scheduler=False)
 #trainer.test(model, criterion, save_path='y_pred.pt')

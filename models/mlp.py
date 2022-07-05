@@ -45,6 +45,6 @@ class MLP(nn.Module):
 	def params_to_train(self):
 		return self.layers.parameters()
 
-	def forward(self, x, adj_t):
-		x = self.layers(x)
+	def forward(self, batch):
+		x = self.layers(batch.x)
 		return x
