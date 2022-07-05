@@ -1,11 +1,6 @@
-import torch
+import config
 from ogb.nodeproppred import PygNodePropPredDataset
-from ogb.nodeproppred import DglNodePropPredDataset
-from torch_geometric.loader import DataLoader
-import torch_geometric.transforms as T
-from torch.utils.data import Dataset, DataLoader
-
-from tqdm import tqdm
+from torch.utils.data import Dataset
 
 class graph_dataset(Dataset):
 	def __init__(self, graph, indicies):
@@ -22,10 +17,9 @@ class graph_dataset(Dataset):
 
 
 def get_graph_data():
-	data = PygNodePropPredDataset(name='ogbn-proteins', root="/Users/joshua/env/datasets")
+	data = PygNodePropPredDataset(name='ogbn-proteins', root=config.protein_path)
 	split_idx = data.get_idx_split()
 
 	graph = data[0]
 
 	return graph, split_idx
-

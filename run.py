@@ -1,4 +1,5 @@
 import torch
+import config
 from data import get_graph_data
 from models.mlp import MLP
 from models.gnn import GNN
@@ -13,7 +14,6 @@ torch.manual_seed(0)
 #l.plot()
 #l.plot_hyperparam_search('hyperparam_search.json')
 #exit()
-
 
 
 
@@ -34,7 +34,7 @@ criterion = torch.nn.BCEWithLogitsLoss()
 #model = SAGE(trainer.graph.x.size(-1), 309, 112, 1, 0.1)
 #model = GCN(trainer.graph.x.size(-1), 256, 112, 3, 0.15)
 #model = MLP(trainer.graph.x.size(-1), 256, 112, num_layers=3, dropout=0.5)
-model = GNN('TransformerConv', trainer.graph.x.size(-1), 300, 112, 1, 0.1)
+model = GNN('TransformerConv', trainer.graph.x.size(-1), 300, 112, 1, 0.1).to(config.device)
 
 trainer.train(model, criterion, num_epochs=300, lr=0.01, save_log=True, num_runs=10, use_scheduler=False)
 #trainer.test(model, criterion, save_path='y_pred.pt')

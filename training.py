@@ -8,6 +8,7 @@ import json
 from torch_geometric.loader import NeighborLoader
 import torch_geometric.transforms as T
 from torch_scatter import scatter
+import config
 
 class GraphTrainer():
 	'''
@@ -20,7 +21,7 @@ class GraphTrainer():
 			- dictionary for storing the sample splits (train | valid | test) indexes
 		'''
 #		graph.num_nodes = torch.tensor(graph.num_nodes)
-		self.graph = graph
+		self.graph = graph#.to(config.device)
 		self.split_idx = split_idx
 		self.evaluator = Evaluator(name='ogbn-proteins')
 
@@ -138,11 +139,11 @@ class GraphTrainer():
 		'''
 		model.train()
 
-		for batch in self.train_loader:
+		for batch in tqdm(self.train_loader):
 			optimizer.zero_grad()
 
 			# calculate output
-			out = model(batch)
+			out = model(batch.to(config.device))
 
 			# update weights
 			loss = criterion(out, batch.y.to(torch.float))
