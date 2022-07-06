@@ -50,9 +50,10 @@ class GraphTrainer():
 		self.test_loader = NeighborLoader(
                                 self.graph,
                                 num_neighbors=[-1],
-                                batch_size=64,
+                                batch_size=1,
                                 directed=False,
                                 shuffle=False,
+								input_nodes=split_idx['valid'],
                                 transform=self.transforms,
         )
 		
@@ -105,7 +106,7 @@ class GraphTrainer():
 			epoch_bar = tqdm(range(1, num_epochs+1))
 			for epoch in epoch_bar:
 				# perform a train pass
-				_ = self.train_pass(model, optimizer, criterion)
+				#_ = self.train_pass(model, optimizer, criterion)
 				
 				# construct a results dictionary to store training parameters and model performance metrics
 				results_dict = self.test(model, criterion)
@@ -179,9 +180,9 @@ class GraphTrainer():
 				
 			pred = []
 			for batch in tqdm(self.test_loader):
-				y = model(batch)
-				pred.append(y)
-			pred = torch.stack(pred)
+				y = model(batch.to(config.device))
+				pred.append(y.cpu())
+			pred = torch.cat(pred, dim=0)
 			print(pred.shape)
 
 			# loop over each sample set (train | valid | test) and calculate loss and ROC
@@ -200,7 +201,7 @@ class GraphTrainer():
 				results_dict[s] = {'loss':round(loss,3), 'roc':round(roc,3)}
 		
 			if save_path:
-				torch.save(y_pred, save_path)	
+				torch.save(pred, save_path)	
 
 		return results_dict
 

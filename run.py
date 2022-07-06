@@ -31,12 +31,11 @@ trainer = GraphTrainer(graph, split_idx)
 #trainer.normalise()
 criterion = torch.nn.BCEWithLogitsLoss()
 
-#model = SAGE(trainer.graph.x.size(-1), 309, 112, 1, 0.1)
-#model = GCN(trainer.graph.x.size(-1), 256, 112, 3, 0.15)
-#model = MLP(trainer.graph.x.size(-1), 256, 112, num_layers=3, dropout=0.5)
-model = GNN('TransformerConv', trainer.graph.x.size(-1), 300, 112, 1, 0.1).to(config.device)
 
-trainer.train(model, criterion, num_epochs=300, lr=0.01, save_log=True, num_runs=10, use_scheduler=False)
+#model = MLP(trainer.graph.x.size(-1), 256, 112, num_layers=3, dropout=0.3)
+model = GNN('TransformerConv', trainer.graph.x.size(-1), 64, 112, 1, 0.1)
+
+trainer.train(model.to(config.device), criterion, num_epochs=300, lr=0.01, save_log=True, num_runs=10, use_scheduler=False)
 #trainer.test(model, criterion, save_path='y_pred.pt')
 
 #param_dict = {'lr':(1e-4,1e-1), 'layers':(1,7), 'hid_dim':(32,350), 'dropout':(0,0.5)}
