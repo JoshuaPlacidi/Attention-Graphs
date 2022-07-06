@@ -5,7 +5,7 @@ from ogb.nodeproppred import Evaluator
 from logger import Logger
 import numpy as np 
 import json
-from torch_geometric.loader import NeighborLoader
+from torch_geometric.loader import DataLoader, NeighborLoader
 import torch_geometric.transforms as T
 from torch_scatter import scatter
 import config
@@ -45,6 +45,16 @@ class GraphTrainer():
 								input_nodes=split_idx['train'],
 								transform=self.transforms,
 		)
+		
+#		self.test_dataset = Dataset(
+		self.test_loader = NeighborLoader(
+                                self.graph,
+                                num_neighbors=[-1],
+                                batch_size=64,
+                                directed=False,
+                                shuffle=False,
+                                transform=self.transforms,
+        )
 		
 	def normalise(self):
 		'''
@@ -167,7 +177,12 @@ class GraphTrainer():
 		with torch.no_grad():
 			model.eval()
 				
-			y_pred = model(self.graph)
+			pred = []
+			for batch in tqdm(self.test_loader):
+				y = model(batch)
+				pred.append(y)
+			pred = torch.stack(pred)
+			print(pred.shape)
 
 			# loop over each sample set (train | valid | test) and calculate loss and ROC
 			results_dict = {}
