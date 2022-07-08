@@ -14,7 +14,7 @@ class GraphTrainer():
 	'''
 	Class for full batch graph training 
 	'''
-	def __init__(self, graph, split_idx):
+	def __init__(self, graph, split_idx, train_batch_size=64, evaluate_batch_size=64):
 		'''
 		params:
 			- graph dataset
@@ -32,29 +32,33 @@ class GraphTrainer():
 		# emb = torch.load('embedding.pt', map_location='cpu')
 		# x = torch.cat([x, emb], dim=-1)
 		
-		self.transforms = T.Compose([T.ToSparseTensor(remove_edge_index=False)])
-		self.graph = self.transforms(self.graph)
+		#self.transforms = T.Compose([T.ToSparseTensor(remove_edge_index=False)])
+		#self.graph = self.transforms(self.graph)
+
+		self.train_batch_size = train_batch_size
+		self.evaluate_batch_size = evaluate_batch_size
 		
 		# set feature variables
 		self.train_loader = NeighborLoader(
 								self.graph,
 								num_neighbors=[10,5],
-								batch_size=64,
+								batch_size=self.train_batch_size,
 								directed=False,
+								replace=True,
 								shuffle=True,
 								input_nodes=split_idx['train'],
-								transform=self.transforms,
+								#transform=self.transforms,
 		)
 		
-#		self.test_dataset = Dataset(
-		self.test_loader = NeighborLoader(
+		self.valid_loader = NeighborLoader(
                                 self.graph,
-                                num_neighbors=[-1],
-                                batch_size=1,
+                                num_neighbors=[10,5],
+                                batch_size=self.evaluate_batch_size,
+								replace=True,
                                 directed=False,
                                 shuffle=False,
 								input_nodes=split_idx['valid'],
-                                transform=self.transforms,
+                                #transform=self.transforms,
         )
 		
 	def normalise(self):
@@ -68,8 +72,16 @@ class GraphTrainer():
 		adj_t = deg_inv_sqrt.view(-1, 1) * adj_t * deg_inv_sqrt.view(1, -1)
 		self.graph.adj_t = adj_t
 		
+	def count_parameters(self, model):
+		total_params = 0
+		for _, parameter in model.named_parameters():
+			if not parameter.requires_grad: 
+				continue
+			param = parameter.numel()
+			total_params+=param
+		return total_params
 
-	def train(self, model, criterion, num_runs=1, num_epochs=10, lr=1e-3, use_scheduler=True, save_log=False):
+	def train(self, model, criterion, num_runs=1, num_epochs=10, lr=1e-3, use_scheduler=True, save_log=False, valid_step=5):
 		'''
 		train a model in full batch graph mode
 		params:
@@ -86,7 +98,7 @@ class GraphTrainer():
 
 		# store model and training information and save it in the logger
 		info = model.param_dict
-		info['num_runs'], info['lr'], info['num_epochs'], info['use_scheduler'] = num_runs, lr, num_epochs, use_scheduler
+		info['num_runs'], info['batch_size'], info['lr'], info['num_epochs'], info['use_scheduler'], info['trainable_parameters'] = num_runs, self.train_batch_size, lr, num_epochs, use_scheduler, self.count_parameters(model)
 		print('Training config: {0}'.format(info))
 		logger = Logger(info=model.param_dict)
 
@@ -102,28 +114,35 @@ class GraphTrainer():
 			if use_scheduler:
 				scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, threshold=2e-4, factor=0.1, cooldown=5, min_lr=1e-9)
 
+			valid_loss, valid_roc = self.evaluate(model, sample_set='valid', criterion=criterion)
 
 			epoch_bar = tqdm(range(1, num_epochs+1))
 			for epoch in epoch_bar:
 				# perform a train pass
-				#_ = self.train_pass(model, optimizer, criterion)
-				
-				# construct a results dictionary to store training parameters and model performance metrics
-				results_dict = self.test(model, criterion)
-				results_dict['run'] = run
-				results_dict['epoch'] = epoch
+				train_loss, train_roc = self.train_pass(model, optimizer, criterion)
 				current_lr = optimizer.param_groups[0]['lr']
-				results_dict['lr'] = current_lr
+
+				results_dict = {}
+				results_dict['run'], results_dict['epoch'], results_dict['lr'], results_dict['train_loss'], results_dict['train_roc'], results_dict['valid_loss'], results_dict['valid_roc'] = run, epoch, current_lr, train_loss, train_roc, valid_loss, valid_roc
+
+				if epoch % valid_step == 0:
+					# construct a results dictionary to store training parameters and model performance metrics
+					valid_loss, valid_roc = self.evaluate(model, sample_set='valid', criterion=criterion)
+					results_dict['valid_loss'], results_dict['valid_roc'] = valid_loss, valid_roc
+				
 				logger.log(results_dict)
 
 				epoch_bar.set_description(
-					"E {0}: LR({1}), T{2}, V{3}".format(epoch, round(current_lr,9),
-						*[(results_dict[s]['loss'], results_dict[s]['roc']) for s in ['train','valid']])
-					)
+					"E {0}: LR({1}), T{2}, V{3}".format(
+						epoch,
+						round(current_lr,9),
+						(round(results_dict['train_loss'],5), round(results_dict['train_roc'],5)),
+						(round(results_dict['valid_loss'],5), round(results_dict['valid_roc'],5))
+					))
 
 
 				if use_scheduler:
-					scheduler.step(results_dict['valid']['loss'])
+					scheduler.step(results_dict['valid_loss'])
 
 					# exit training if the learning rate drops to low
 					if current_lr <= 1e-7:
@@ -149,25 +168,40 @@ class GraphTrainer():
 			Float of loss of the model on the train set
 		'''
 		model.train()
+		total_loss, count = 0, 0
+		pred = []
+		gts = []
 
-		for batch in tqdm(self.train_loader):
+		for batch in self.train_loader:
 			optimizer.zero_grad()
 
 			# calculate output
-			out = model(batch.to(config.device))
+			pred_y = model(batch.to(config.device))[:batch.batch_size]
+
+			pred.append(pred_y.cpu())
+			gts.append(batch.y[:batch.batch_size])
 
 			# update weights
-			loss = criterion(out, batch.y.to(torch.float))
+			loss = criterion(pred_y, batch.y[:batch.batch_size].to(torch.float))
 			loss.backward()
 			optimizer.step()
 
-		return
+			total_loss += loss.item()
+			count += 1
+
+		train_loss = total_loss / count
+		train_roc = self.evaluator.eval({
+									'y_true': torch.cat(gts, dim=0),
+									'y_pred': torch.cat(pred, dim=0),
+								})['rocauc']
+
+		return train_loss, train_roc
 			
 		
 
-	def test(self, model, criterion, save_path=None):
+	def evaluate(self, model, sample_set='valid', criterion=torch.nn.BCEWithLogitsLoss(), save_path=None):
 		'''
-		perform a test evaluation of a model on full graph
+		perform a evaluation of a model on validation set
 		params:
 			- model: model to evaluate
 			- criterion: object to calculate loss between target and model output
@@ -177,33 +211,32 @@ class GraphTrainer():
 		'''
 		with torch.no_grad():
 			model.eval()
+
+			if sample_set == 'valid':
+				sample_loader = self.valid_loader
+			else:
+				raise Exception('trainer.evaluate(): sample_set "' + sample_set + '" not recognited')
 				
-			pred = []
-			for batch in tqdm(self.test_loader):
-				y = model(batch.to(config.device))
-				pred.append(y.cpu())
+			pred, count = [], 0
+			for batch in sample_loader:
+				pred_y = model(batch.to(config.device))[:batch.batch_size]
+				loss = criterion(pred_y, batch.y[:batch.batch_size].to(torch.float)).item()
+				pred.append(pred_y.cpu())
+				count += 1
+
 			pred = torch.cat(pred, dim=0)
-			print(pred.shape)
 
 			# loop over each sample set (train | valid | test) and calculate loss and ROC
-			results_dict = {}
-			for s in ['train', 'valid', 'test']:
-				loss = criterion(
-							y_pred[self.split_idx[s]],
-							self.graph.y[self.split_idx[s]].to(torch.float)
-						).item()
-				roc = self.evaluator.eval({
-									'y_true': self.graph.y[self.split_idx[s]],
-									'y_pred': y_pred[self.split_idx[s]],
+			loss = loss / count
+			roc = self.evaluator.eval({
+									'y_true': self.graph.y[self.split_idx[sample_set]],
+									'y_pred': pred,
 								})['rocauc']
-
-				# store values in dictionary
-				results_dict[s] = {'loss':round(loss,3), 'roc':round(roc,3)}
 		
 			if save_path:
 				torch.save(pred, save_path)	
 
-		return results_dict
+		return loss, roc
 
 	def hyperparam_search(self, model, param_dict, criterion=torch.nn.BCEWithLogitsLoss(), num_searches=10):
 		'''
