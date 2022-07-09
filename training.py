@@ -1,4 +1,3 @@
-from tkinter import W
 import torch
 from tqdm import tqdm
 from ogb.nodeproppred import Evaluator
@@ -14,7 +13,7 @@ class GraphTrainer():
 	'''
 	Class for full batch graph training 
 	'''
-	def __init__(self, graph, split_idx, train_batch_size=64, evaluate_batch_size=64):
+	def __init__(self, graph, split_idx, train_batch_size=64, evaluate_batch_size=64, label_mask_p=0.5):
 		'''
 		params:
 			- graph dataset
@@ -28,6 +27,14 @@ class GraphTrainer():
 		# aggregate edge features using mean
 		x = scatter(graph.edge_attr, graph.edge_index[0], dim=0, dim_size=graph.num_nodes, reduce='mean')
 		self.graph.x = x
+		
+		# create label mask
+		train_labels = self.graph.y[self.split_idx['train']]
+		train_mask = torch.rand(train_labels.shape[0]).ge(label_mask_p).unsqueeze(-1)
+		valid_test_mask = torch.zeros(len(self.split_idx['valid']) + len(self.split_idx['test']), 1)
+		mask = torch.cat((train_mask, valid_test_mask), 0)
+		self.graph.known_y = self.graph.y * mask
+
 		# use node2vec embeddings
 		# emb = torch.load('embedding.pt', map_location='cpu')
 		# x = torch.cat([x, emb], dim=-1)

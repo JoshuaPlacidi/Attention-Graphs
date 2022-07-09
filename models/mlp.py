@@ -1,5 +1,9 @@
 import torch
 import torch.nn as nn
+from typing import Optional, Tuple, Union
+from torch_geometric.typing import Adj, OptTensor, PairTensor
+from torch_geometric.nn.dense.linear import Linear
+from torch_geometric.nn.conv import MessagePassing
 import math
 from collections import OrderedDict
 
@@ -46,5 +50,45 @@ class MLP(nn.Module):
 		return self.layers.parameters()
 
 	def forward(self, batch):
+		print(batch)
+		print(batch.edge_index[:,-5:])
 		x = self.layers(batch.x)
+		exit()
 		return x
+
+
+class MLP_layer(MessagePassing):
+
+	def __init__(
+		self,
+		in_channels: Union[int, Tuple[int, int]],
+		out_channels: int,
+		heads: int = 1,
+		concat: bool = True,
+		beta: bool = False,
+		dropout: float = 0.,
+		edge_dim: Optional[int] = None,
+		bias: bool = True,
+		root_weight: bool = True,
+		**kwargs,
+	):
+		kwargs.setdefault('aggr', 'add')
+		super(MLP_layer, self).__init__(node_dim=0, **kwargs)
+		self.lin = Linear(8,1)
+
+	def reset_parameters(self):
+		return
+
+	def forward(self, batch):
+		#x = self.lin(x)
+
+		out = self.propagate(batch.edge_index, x=batch.x, edge_attr=batch.edge_attr)
+
+		return x
+
+	def message(self, x_i, x_j, edge_attr):
+		print(x_i.shape)
+		print(x_j.shape)
+		print(edge_attr.shape)
+		exit()
+
