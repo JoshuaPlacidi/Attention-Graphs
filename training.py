@@ -13,7 +13,7 @@ class GraphTrainer():
 	'''
 	Class for full batch graph training 
 	'''
-	def __init__(self, graph, split_idx, train_batch_size=64, evaluate_batch_size=64, label_mask_p=0.5):
+	def __init__(self, graph, split_idx, train_batch_size=64, evaluate_batch_size=None, label_mask_p=0.5):
 		'''
 		params:
 			- graph dataset
@@ -43,14 +43,14 @@ class GraphTrainer():
 		#self.graph = self.transforms(self.graph)
 
 		self.train_batch_size = train_batch_size
-		self.evaluate_batch_size = evaluate_batch_size
+		self.evaluate_batch_size = evaluate_batch_size if evaluate_batch_size else train_batch_size
 		
 		# set feature variables
 		self.train_loader = NeighborLoader(
 								self.graph,
-								num_neighbors=[10,5],
+								num_neighbors=[5],
 								batch_size=self.train_batch_size,
-								directed=False,
+								directed=True,
 								replace=True,
 								shuffle=True,
 								input_nodes=split_idx['train'],
@@ -59,10 +59,10 @@ class GraphTrainer():
 		
 		self.valid_loader = NeighborLoader(
                                 self.graph,
-                                num_neighbors=[10,5],
+                                num_neighbors=[5],
                                 batch_size=self.evaluate_batch_size,
 								replace=True,
-                                directed=False,
+                                directed=True,
                                 shuffle=False,
 								input_nodes=split_idx['valid'],
                                 #transform=self.transforms,
@@ -78,7 +78,7 @@ class GraphTrainer():
 		deg_inv_sqrt[deg_inv_sqrt == float('inf')] = 0
 		adj_t = deg_inv_sqrt.view(-1, 1) * adj_t * deg_inv_sqrt.view(1, -1)
 		self.graph.adj_t = adj_t
-		
+	
 	def count_parameters(self, model):
 		total_params = 0
 		for _, parameter in model.named_parameters():
@@ -98,7 +98,8 @@ class GraphTrainer():
 			- num_epochs: number of epochs to train for in each run
 			- lr: initial learning rate
 			- use_scheduler: whether to incremently decrease learning rate or not
-			- save_log: if model logs should be saved to file
+			- save_log: if model
+ logs should be saved to file
 		returns:
 			Logger object with logs of the total training cycle
 		'''

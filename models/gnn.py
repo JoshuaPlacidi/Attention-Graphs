@@ -38,11 +38,11 @@ class GNN(torch.nn.Module):
 		elif conv_type == 'GAT':
 			conv_layer = GATConv
 		elif conv_type == 'TransformerConv':
-			conv_layer = TransformerConv#TransformerConvLayer#
+			conv_layer = TransformerConvLayer#
 		else:
 			raise Exception('GNN model type "' + conv_type + '" not recognized')
 
-		conv_layer = MLP_layer
+#		conv_layer = MLP_layer
 
 		# initialise network layers
 		self.convs = torch.nn.ModuleList()
@@ -65,10 +65,10 @@ class GNN(torch.nn.Module):
 	def forward(self, batch):
 		x, adj_t = batch.x, batch.edge_index
 		for conv in self.convs[:-1]:
-			x = conv(batch) #x = conv(x, adj_t)
+			batch.x = conv(batch) #x = conv(x, adj_t)
 			x = F.relu(x)
 			x = F.dropout(x, p=self.dropout, training=self.training)
-		x = self.convs[-1](x, adj_t)
-		return x
+		batch.x = self.convs[-1](batch)#(x, adj_t)
+		return batch.x
 
 

@@ -27,7 +27,7 @@ torch.manual_seed(0)
 
 graph, split_idx = get_graph_data()
 
-trainer = GraphTrainer(graph, split_idx)
+trainer = GraphTrainer(graph, split_idx, train_batch_size=1)
 #trainer.normalise()
 criterion = torch.nn.BCEWithLogitsLoss()
 

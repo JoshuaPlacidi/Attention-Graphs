@@ -81,7 +81,7 @@ class MLP_layer(MessagePassing):
 
 	def forward(self, batch):
 		#x = self.lin(x)
-
+		print(batch)
 		out = self.propagate(batch.edge_index, x=batch.x, edge_attr=batch.edge_attr)
 
 		return x
@@ -89,6 +89,7 @@ class MLP_layer(MessagePassing):
 	def message(self, x_i, x_j, edge_attr):
 		print(x_i.shape)
 		print(x_j.shape)
+		print(x_i == x_j)
 		print(edge_attr.shape)
 		exit()
 
