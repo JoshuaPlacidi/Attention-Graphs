@@ -27,15 +27,15 @@ torch.manual_seed(0)
 
 graph, split_idx = get_graph_data()
 
-trainer = GraphTrainer(graph, split_idx, train_batch_size=1)
+trainer = GraphTrainer(graph, split_idx, train_batch_size=32, sampler_num_neighbours=100)
 #trainer.normalise()
 criterion = torch.nn.BCEWithLogitsLoss()
 
 
 #model = MLP(trainer.graph.x.size(-1), 256, 112, num_layers=3, dropout=0.3)
-model = GNN('TransformerConv', trainer.graph.x.size(-1), 64, 112, 1, 0.1)
+model = GNN(conv_type='TransformerConv', in_dim=trainer.graph.x.size(-1), hid_dim=64, out_dim=112, num_layers=1, dropout=0.1)
 
-trainer.train(model.to(config.device), criterion, num_epochs=300, lr=0.01, save_log=True, num_runs=10, use_scheduler=False)
+trainer.train(model.to(config.device), criterion, num_epochs=60, lr=0.01, save_log=True, num_runs=2, use_scheduler=True)
 #trainer.test(model, criterion, save_path='y_pred.pt')
 
 #param_dict = {'lr':(1e-4,1e-1), 'layers':(1,7), 'hid_dim':(32,350), 'dropout':(0,0.5)}

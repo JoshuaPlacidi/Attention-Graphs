@@ -63,11 +63,10 @@ class GNN(torch.nn.Module):
 			conv.reset_parameters()
 
 	def forward(self, batch):
-		x, adj_t = batch.x, batch.edge_index
 		for conv in self.convs[:-1]:
 			batch.x = conv(batch) #x = conv(x, adj_t)
-			x = F.relu(x)
-			x = F.dropout(x, p=self.dropout, training=self.training)
+			batch.x = F.relu(batch.x)
+			batch.x = F.dropout(batch.x, p=self.dropout, training=self.training)
 		batch.x = self.convs[-1](batch)#(x, adj_t)
 		return batch.x
 

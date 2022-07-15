@@ -13,7 +13,7 @@ class GraphTrainer():
 	'''
 	Class for full batch graph training 
 	'''
-	def __init__(self, graph, split_idx, train_batch_size=64, evaluate_batch_size=None, label_mask_p=0.5):
+	def __init__(self, graph, split_idx, train_batch_size=64, evaluate_batch_size=None, label_mask_p=0.5, sampler_num_neighbours=597):
 		'''
 		params:
 			- graph dataset
@@ -23,6 +23,7 @@ class GraphTrainer():
 		self.graph = graph#.to(config.device)
 		self.split_idx = split_idx
 		self.evaluator = Evaluator(name='ogbn-proteins')
+		self.sampler_num_neighbours = sampler_num_neighbours
 
 		# aggregate edge features using mean
 		x = scatter(graph.edge_attr, graph.edge_index[0], dim=0, dim_size=graph.num_nodes, reduce='mean')
@@ -48,7 +49,7 @@ class GraphTrainer():
 		# set feature variables
 		self.train_loader = NeighborLoader(
 								self.graph,
-								num_neighbors=[5],
+								num_neighbors=[self.sampler_num_neighbours],
 								batch_size=self.train_batch_size,
 								directed=True,
 								replace=True,
@@ -59,7 +60,7 @@ class GraphTrainer():
 		
 		self.valid_loader = NeighborLoader(
                                 self.graph,
-                                num_neighbors=[5],
+                                num_neighbors=[self.sampler_num_neighbours],
                                 batch_size=self.evaluate_batch_size,
 								replace=True,
                                 directed=True,
@@ -106,7 +107,7 @@ class GraphTrainer():
 
 		# store model and training information and save it in the logger
 		info = model.param_dict
-		info['num_runs'], info['batch_size'], info['lr'], info['num_epochs'], info['use_scheduler'], info['trainable_parameters'] = num_runs, self.train_batch_size, lr, num_epochs, use_scheduler, self.count_parameters(model)
+		info['num_runs'], info['batch_size'], info['sampler_num_neighbours'], info['lr'], info['num_epochs'], info['use_scheduler'], info['trainable_parameters'] = num_runs, self.train_batch_size, self.sampler_num_neighbours, lr, num_epochs, use_scheduler, self.count_parameters(model)
 		print('Training config: {0}'.format(info))
 		logger = Logger(info=model.param_dict)
 
@@ -225,10 +226,10 @@ class GraphTrainer():
 			else:
 				raise Exception('trainer.evaluate(): sample_set "' + sample_set + '" not recognited')
 				
-			pred, count = [], 0
+			pred, loss, count = [], 0, 0
 			for batch in sample_loader:
 				pred_y = model(batch.to(config.device))[:batch.batch_size]
-				loss = criterion(pred_y, batch.y[:batch.batch_size].to(torch.float)).item()
+				loss += criterion(pred_y, batch.y[:batch.batch_size].to(torch.float)).item()
 				pred.append(pred_y.cpu())
 				count += 1
 

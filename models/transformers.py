@@ -22,7 +22,7 @@ class TransformerConvLayer(MessagePassing):
 		concat: bool = True,
 		beta: bool = False,
 		dropout: float = 0.,
-		edge_dim: Optional[int] = 8,
+		edge_dim: Optional[int] = None,
 		bias: bool = True,
 		root_weight: bool = True,
 		**kwargs,
@@ -83,10 +83,9 @@ class TransformerConvLayer(MessagePassing):
 		#x_source, x_targets, edge_index,
 		#edge_attr=None, return_attention_weights=None):
 
-		print(batch)
 		x = (batch.x,batch.x)#(batch.x[:batch.batch_size], batch.x[batch.batch_size:])
 		edge_index = batch.edge_index
-		edge_attr = batch.edge_attr
+		edge_attr = None
 		return_attention_weights = None
 
 		H, C = self.heads, self.out_channels
