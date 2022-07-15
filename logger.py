@@ -42,44 +42,62 @@ class Logger(object):
 		with open(filepath, 'w') as fp:
 			json.dump(self.logs, fp)	
 
-	def plot_run(self, filepath, show_test=False):
-		#TODO correct this method to plot only 1 run of data
-		raise NotImplementedError
+	def plot_run(self, run=None, save_path=None):
+		'''
+		plot metrics from a specified run, if no run is specified then the best run (lowest valid loss) is plotted
+		params:
+			- run: run number to plot
+		'''
+		runs = self.logs['run']
+		
+		# if no run is specifed then use the best run (lowest valid loss)	
+		if not run:
+			best_valid_loss_idx = np.argmax(self.logs['valid_loss'])
+			run = runs[best_valid_loss_idx]
 
-		assert filepath.endswith('.eps')
+		# define the slice range of the desired run
+		run_start = runs.index(run)
+		run_end = len(runs) - runs[::-1].index(run) - 1
+		run_slice = slice(run_start, run_end)	
 
 		fig = plt.figure(figsize=(14, 6.5), dpi=80)
 		
+		# plot loss curves
 		fig.add_subplot(121)
-		tl = plt.plot(self.logs['train_loss'], c=self.train_col, label='train')
-		vl = plt.plot(self.logs['valid_loss'], c=self.valid_col, label='valid')
-		if show_test:
-			plt.plot(self.logs['test_loss'], c=self.test_col, label='test')
+		tl = plt.plot(self.logs['train_loss'][run_slice], c=self.train_col, label='train')
+		vl = plt.plot(self.logs['valid_loss'][run_slice], c=self.valid_col, label='valid')
+
+		# configure loss plot
 		plt.ylabel('Loss')
-		plt.ylim(0, 1)
+		plt.yscale('log')
 		plt.title('Loss Curves and Learning Rate')
 
-		lr = plt.gca().twinx().plot(self.logs['lr'], c=self.alt_col, label='LR')
+		# plot lr curves ontop of loss curves
+		lr = plt.gca().twinx().plot(self.logs['lr'][run_slice], c=self.alt_col, label='LR')
 		plt.yscale('log')
 		plt.ylabel('Learning Rate')
 		
+		# create legend for loss and lr curves
 		lns = tl + vl + lr
 		labs = [l.get_label() for l in lns]
 		plt.legend(lns, labs, loc=0)
 
-
+		# plot roc curves
 		fig.add_subplot(122)
-		plt.plot(self.logs['train_roc'], c=self.train_col, label='train')
-		plt.plot(self.logs['valid_roc'], c=self.valid_col, label='valid')
-		if show_test:
-			plt.plot(self.logs['test_roc'], c=self.test_col, label='test')
+		plt.plot(self.logs['train_roc'][run_slice], c=self.train_col, label='train')
+		plt.plot(self.logs['valid_roc'][run_slice], c=self.valid_col, label='valid')
+
+		# configure roc plot
 		plt.xlabel('Epoch')
 		plt.ylabel('Reciever Operator Curve')
 		plt.title('ROC')
 		plt.legend()
-
+	
+		# save figure
 		fig.tight_layout()
-		plt.savefig(filepath, format='eps')
+		if save_path:
+			plt.savefig(save_path, format='eps')
+		plt.show()
 			
 	def plot_hyperparam_search(self, filepath):
 		'''
@@ -158,56 +176,62 @@ class Logger(object):
 		'''
 		with open(filepath) as fp:
 			self.logs = json.load(fp)
-	
-	def plot(self):
+
+	def plot_metric(self, metric='valid_loss', save_path=None):
 		'''
-		plot the resul
+		plot a singluar metric from over multiple runs with a mean line
+		params:
+			- metric: the name of the metric to plot
 		'''
+
+		# get the number of runs
 		runs = self.logs['run']
 		num_runs = max(runs)
 		
-		if num_runs > 1: # if more than 1 run in logs then plot means
+		# define figure size
+		fig = plt.figure(figsize=(14, 6.5), dpi=80)
 
-			fig = plt.figure(figsize=(14, 6.5), dpi=80)
+		metric_list = []
 
-			losses = []
+		for r in range(1, num_runs+1): # for each run
 
-			for r in range(1, num_runs+1): # for each run
+			# get the index of the start and end of the current run
+			run_start = runs.index(r)
+			run_end = len(runs) - runs[::-1].index(r) - 1
 
-				# get the index of the start and end of the current run
-				run_start = runs.index(r)
-				run_end = len(runs) - runs[::-1].index(r) - 1
+			# get this runs metric values by indexes the metric list with the runs start and end indicies
+			run_metric = self.logs[metric][run_start:run_end+1]
+			metric_list.append(run_metric)
 
-			
-				run_valid_loss = self.logs['valid_loss'][run_start:run_end+1]				
-				losses.append(run_valid_loss)
+			# plot this runs metric values
+			plt.plot(
+				range(0, run_end - run_start + 1), 
+				run_metric,
+				color="lightgrey"
+			)
 
-				plt.plot(
-					range(0, run_end - run_start + 1), 
-					run_valid_loss,
-					color="lightgrey"
-				)
+		# pivot the metric list from runlist[epoch[value]] to epoch[runlist[value]] so that we can calculate the mean of the metrics values at each epoch across runs
+		epoch_metric = list(map(list, itertools.zip_longest(*metric_list, fillvalue=None)))
+		epoch_metric[2].append(None)
 
-			epoch_loss = list(map(list, itertools.zip_longest(*losses, fillvalue=None)))
-			epoch_loss[2].append(None)
-			
-			for e in range(len(epoch_loss)):
-				epoch_loss[e] = [l for l in epoch_loss[e] if l is not None]
+		# remove Nones
+		for e in range(len(epoch_metric)):
+			epoch_metric[e] = [l for l in epoch_metric[e] if l is not None]
 
-			mean_epoch_loss = list(map(np.mean, epoch_loss))
+		# calculate mean for each epoch value
+		mean_epoch_metric = list(map(np.mean, epoch_metric))
 
-			plt.plot(range(0, max(self.logs['epoch'])), mean_epoch_loss)
-			plt.show()
+		# plot the means
+		plt.plot(range(0, max(self.logs['epoch'])), mean_epoch_metric, label='mean')
+		plt.title(metric)
+		plt.xlabel('Epoch')
+		plt.ylabel(metric)
+		plt.yscale('log')
+		plt.legend()
 
-		else:
-			raise('plot need more runs')
-
-
-
-
-
-
-
-
-
-
+		# if save_path is specified then save figure
+		if save_path:		
+			assert save_path.endswith('eps')
+			plt.savefig(save_path, format='eps')
+		
+		plt.show()
