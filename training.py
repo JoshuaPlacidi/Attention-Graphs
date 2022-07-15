@@ -104,7 +104,7 @@ class GraphTrainer():
 		returns:
 			Logger object with logs of the total training cycle
 		'''
-
+		torch.manual_seed(0)
 		# store model and training information and save it in the logger
 		info = model.param_dict
 		info['num_runs'], info['batch_size'], info['sampler_num_neighbours'], info['lr'], info['num_epochs'], info['use_scheduler'], info['trainable_parameters'] = num_runs, self.train_batch_size, self.sampler_num_neighbours, lr, num_epochs, use_scheduler, self.count_parameters(model)
@@ -161,7 +161,7 @@ class GraphTrainer():
 
 		# save logs files
 		if save_log:
-			logger.save("logs/log.json".format(run))
+			logger.save("logs/{0}_log.json".format(info['model_type']))
 
 		return logger
 
@@ -247,7 +247,14 @@ class GraphTrainer():
 
 		return loss, roc
 
-	def hyperparam_search(self, model, param_dict, criterion=torch.nn.BCEWithLogitsLoss(), num_searches=10):
+	def hyperparam_search(
+			self,
+			model,
+			param_dict,
+			criterion=torch.nn.BCEWithLogitsLoss(),
+			num_searches=10,
+			num_epochs=200,
+			):
 		'''
 		performs a hyperparameter search over a range of values, each search randomly selects
 		values from each parameters specified range
@@ -288,7 +295,7 @@ class GraphTrainer():
 						num_layers=params['layers'], dropout=params['dropout'])
 
 			# initialise training strategy with sampled hyperparameters
-			m_logger = self.train(m, criterion, num_epochs=200, lr=params['lr'], save_log=True)
+			m_logger = self.train(m, criterion, num_epochs=num_epochs, lr=params['lr'], save_log=True)
 			logs.append(m_logger.logs)
 			
 			# if model is best so far, save its parameters
@@ -297,12 +304,32 @@ class GraphTrainer():
 				best_loss = m_loss
 				best_params = params
 			
-			# store hyperparamet logs
+			# store hyperparameter logs
 			with open('hyperparam_search.json', 'w') as fp:
 				json.dump(logs, fp)
 
 		# print results
 		print('Best Params:', best_params, ' with best loss:', best_loss)
+
+	
+	def run_experiment(
+			self,
+			models,
+			model_runs=10,
+			num_epochs=200,
+			lr=0.01,
+			criterion=torch.nn.BCEWithLogitsLoss(),
+			):
+		
+		logs = []
+
+		for i, m in enumerate(models):
+			print('E{0}'.format(i))
+			m_logger = self.train(m, criterion, num_epochs=num_epochs, lr=lr, save_log=True, num_runs=model_runs)
+			logs.append(m_logger.logs)
+
+			with open('logs/experiment_logs.json', 'w') as fp:
+				json.dump(logs, fp)
 
 
 

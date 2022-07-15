@@ -57,8 +57,8 @@ class Logger(object):
 
 		# define the slice range of the desired run
 		run_start = runs.index(run)
-		run_end = len(runs) - runs[::-1].index(run) - 1
-		run_slice = slice(run_start, run_end)	
+		run_end = len(runs) - runs[::-1].index(run)
+		run_slice = slice(run_start, run_end)
 
 		fig = plt.figure(figsize=(14, 6.5), dpi=80)
 		
@@ -147,19 +147,19 @@ class Logger(object):
 
 		for r in range(1, num_runs+1):
 			run_start = runs.index(r)
-			run_end = len(runs) - runs[::-1].index(r) - 1
+			run_end = len(runs) - runs[::-1].index(r)
 
 			# find the best model: i.e. model with lowest valdiation loss
 			best_idx = min(
-				range(len(self.logs['valid_loss'][run_start:run_end+1])),
-				key=self.logs['valid_loss'][run_start:run_end+1].__getitem__
+				range(len(self.logs['valid_loss'][run_start:run_end])),
+				key=self.logs['valid_loss'][run_start:run_end].__getitem__
 			)
 
 			# get the other metric values from the best model and store them
-			train_losses.append(self.logs['train_loss'][run_start:run_end+1][best_idx])
-			train_rocs.append(self.logs['train_roc'][run_start:run_end+1][best_idx])
-			valid_losses.append(self.logs['valid_loss'][run_start:run_end+1][best_idx])
-			valid_rocs.append(self.logs['valid_roc'][run_start:run_end+1][best_idx])
+			train_losses.append(self.logs['train_loss'][run_start:run_end][best_idx])
+			train_rocs.append(self.logs['train_roc'][run_start:run_end][best_idx])
+			valid_losses.append(self.logs['valid_loss'][run_start:run_end][best_idx])
+			valid_rocs.append(self.logs['valid_roc'][run_start:run_end][best_idx])
 
 		# print means and standard deviations over best models from each run
 		print('Results from {0} runs'.format(num_runs))
@@ -197,15 +197,15 @@ class Logger(object):
 
 			# get the index of the start and end of the current run
 			run_start = runs.index(r)
-			run_end = len(runs) - runs[::-1].index(r) - 1
+			run_end = len(runs) - runs[::-1].index(r)
 
 			# get this runs metric values by indexes the metric list with the runs start and end indicies
-			run_metric = self.logs[metric][run_start:run_end+1]
+			run_metric = self.logs[metric][run_start:run_end]
 			metric_list.append(run_metric)
 
 			# plot this runs metric values
 			plt.plot(
-				range(0, run_end - run_start + 1), 
+				range(0, run_end - run_start), 
 				run_metric,
 				color="lightgrey"
 			)

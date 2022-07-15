@@ -11,14 +11,60 @@ from torch_geometric.nn.dense.linear import Linear
 from torch_geometric.typing import Adj, OptTensor, PairTensor
 from torch_geometric.utils import softmax
 
+class AttentionGNN(torch.nn.Module):
+	def __init__(
+			self,
+			attention_type = 'self',
+			in_dim = 8,
+			hid_dim = 64,
+			out_dim = 112,
+			num_layers = 3,
+			dropout = 0.25,
+		):
+		super(AttentionGNN, self).__init__()
+
+		# create a parameter dictionary to store information about the model, used for logging experiments
+		self.param_dict = {'model_type':'ATTN_' + attention_type, 'in_dim':in_dim, 'hid_dim':hid_dim, 'out_dim':out_dim, 'layers':num_layers,
+							'dropout':dropout}
+	
+		attn_layer = TransformerConvLayer
+		
+		self.layers = torch.nn.ModuleList()
+		self.layers.append(
+			attn_layer(in_dim, hid_dim)
+		)
+
+		for _ in range(num_layers - 2):
+			self.layers.append(
+				attn_layer(hid_dim, hid_dim)
+			)
+
+		self.layers.append(
+			attn_layer(hid_dim, out_dim)
+		)
+
+		self.dropout = dropout
+
+	def reset_parameters(self):
+		for layer in self.layers():
+			layer.reset_parameters()
+
+	def forward(self, batch):
+		for layer in self.layers[:-1]:
+			batch.x = layer(batch)
+			batch.x = F.relu(batch.x)
+			batch.x = F.dropout(batch.x, p=self.dropout, training=self.training)
+		batch.x = self.layers[-1](batch.x, batch.edge_index)
+		return batch.x
+
 
 class TransformerConvLayer(MessagePassing):
 
 	def __init__(
 		self,
-		in_channels: Union[int, Tuple[int, int]],
-		out_channels: int,
-		heads: int = 1,
+		in_dim: Union[int, Tuple[int, int]],
+		out_dim: int,
+		attn_heads: int = 1,
 		concat: bool = True,
 		beta: bool = False,
 		dropout: float = 0.,
@@ -30,9 +76,9 @@ class TransformerConvLayer(MessagePassing):
 		kwargs.setdefault('aggr', 'add')
 		super(TransformerConvLayer, self).__init__(node_dim=0, **kwargs)
 
-		self.in_channels = in_channels
-		self.out_channels = out_channels
-		self.heads = heads
+		self.in_channels = in_dim
+		self.out_channels = out_dim
+		self.heads = attn_heads
 		self.beta = beta and root_weight
 		self.root_weight = root_weight
 		self.concat = concat
@@ -43,26 +89,26 @@ class TransformerConvLayer(MessagePassing):
 		if isinstance(in_channels, int):
 			in_channels = (in_channels, in_channels)
 
-		self.lin_key = Linear(in_channels[0], heads * out_channels)
-		self.lin_query = Linear(in_channels[1], heads * out_channels)
-		self.lin_value = Linear(in_channels[0], heads * out_channels)
+		self.lin_key = Linear(in_channels[0], attn_heads * out_dim)
+		self.lin_query = Linear(in_channels[1], attn_heads * out_dim)
+		self.lin_value = Linear(in_channels[0], attn_heads * out_dim)
 
 		if edge_dim is not None:
-			self.lin_edge = Linear(edge_dim, heads * out_channels, bias=False)
+			self.lin_edge = Linear(edge_dim, attn_heads * out_dim, bias=False)
 		else:
 			self.lin_edge = self.register_parameter('lin_edge', None)
 
 		if concat:
-			self.lin_skip = Linear(in_channels[1], heads * out_channels,
+			self.lin_skip = Linear(in_channels[1], attn_heads * out_dim,
 								   bias=bias)
 			if self.beta:
-				self.lin_beta = Linear(3 * heads * out_channels, 1, bias=False)
+				self.lin_beta = Linear(3 * attn_heads * out_dim, 1, bias=False)
 			else:
 				self.lin_beta = self.register_parameter('lin_beta', None)
 		else:
-			self.lin_skip = Linear(in_channels[1], out_channels, bias=bias)
+			self.lin_skip = Linear(in_channels[1], out_dim, bias=bias)
 			if self.beta:
-				self.lin_beta = Linear(3 * out_channels, 1, bias=False)
+				self.lin_beta = Linear(3 * out_dim, 1, bias=False)
 			else:
 				self.lin_beta = self.register_parameter('lin_beta', None)
 
@@ -80,10 +126,7 @@ class TransformerConvLayer(MessagePassing):
 
 
 	def forward(self, batch):
-		#x_source, x_targets, edge_index,
-		#edge_attr=None, return_attention_weights=None):
-
-		x = (batch.x,batch.x)#(batch.x[:batch.batch_size], batch.x[batch.batch_size:])
+		x = (batch.x,batch.x)
 		edge_index = batch.edge_index
 		edge_attr = None
 		return_attention_weights = None

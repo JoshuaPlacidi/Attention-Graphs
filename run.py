@@ -9,11 +9,13 @@ from logger import Logger
 torch.manual_seed(0)
 
 
-#l = Logger()
-#l.load('logs/log.json')
-#l.plot()
-#l.plot_hyperparam_search('hyperparam_search.json')
-#exit()
+# l = Logger()
+# l.load('logs/GCN_log.json')
+# l.plot_metric()
+# l.plot_run()
+# exit()
+# #l.plot_hyperparam_search('hyperparam_search.json')
+# exit()
 
 
 
@@ -32,15 +34,20 @@ trainer = GraphTrainer(graph, split_idx, train_batch_size=32, sampler_num_neighb
 criterion = torch.nn.BCEWithLogitsLoss()
 
 
-#model = MLP(trainer.graph.x.size(-1), 256, 112, num_layers=3, dropout=0.3)
-model = GNN(conv_type='TransformerConv', in_dim=trainer.graph.x.size(-1), hid_dim=64, out_dim=112, num_layers=1, dropout=0.1)
+#model = MLP(trainer.graph.x.size(-1), 64, 112, num_layers=3, dropout=0.3)
+#model = GNN(conv_type='GCN', in_dim=trainer.graph.x.size(-1), hid_dim=64, out_dim=112, num_layers=1, dropout=0.1)
 
-trainer.train(model.to(config.device), criterion, num_epochs=60, lr=0.01, save_log=True, num_runs=2, use_scheduler=True)
+#logs = trainer.train(model.to(config.device), criterion, num_epochs=100, lr=0.01, save_log=True, num_runs=1, use_scheduler=True)
 #trainer.test(model, criterion, save_path='y_pred.pt')
 
 #param_dict = {'lr':(1e-4,1e-1), 'layers':(1,7), 'hid_dim':(32,350), 'dropout':(0,0.5)}
 #trainer.hyperparam_search(model=MLP, param_dict=param_dict, num_searches=50)
 
-l = Logger()
-l.load('logs/log.json')
-l.plot()
+mlp = MLP(in_dim=trainer.graph.x.size(-1), hid_dim=64, out_dim=112, num_layers=3, dropout=0.3)
+gcn = GNN(conv_type='GCN', in_dim=trainer.graph.x.size(-1), hid_dim=64, out_dim=112, num_layers=1, dropout=0.1)
+sage = GNN(conv_type='SAGE', in_dim=trainer.graph.x.size(-1), hid_dim=64, out_dim=112, num_layers=1, dropout=0.1)
+gat = GNN(conv_type='GAT', in_dim=trainer.graph.x.size(-1), hid_dim=64, out_dim=112, num_layers=1, dropout=0.1)
+
+models = [mlp, gcn, sage, gat]
+
+trainer.run_experiment(models)
