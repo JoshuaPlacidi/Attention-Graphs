@@ -110,6 +110,7 @@ class GraphTrainer():
 		info['num_runs'], info['batch_size'], info['sampler_num_neighbours'], info['lr'], info['num_epochs'], info['use_scheduler'], info['trainable_parameters'] = num_runs, self.train_batch_size, self.sampler_num_neighbours, lr, num_epochs, use_scheduler, self.count_parameters(model)
 		print('Training config: {0}'.format(info))
 		logger = Logger(info=model.param_dict)
+		model.to(config.device)
 
 		# perform a new training experiement for each run, reseting the model parameters each time
 		for run in range(1, num_runs+1):
@@ -315,7 +316,7 @@ class GraphTrainer():
 	def run_experiment(
 			self,
 			models,
-			model_runs=10,
+			model_runs=5,
 			num_epochs=200,
 			lr=0.01,
 			criterion=torch.nn.BCEWithLogitsLoss(),
@@ -325,7 +326,7 @@ class GraphTrainer():
 
 		for i, m in enumerate(models):
 			print('E{0}'.format(i))
-			m_logger = self.train(m, criterion, num_epochs=num_epochs, lr=lr, save_log=True, num_runs=model_runs)
+			m_logger = self.train(m, criterion, num_epochs=num_epochs, lr=lr, save_log=False, num_runs=model_runs)
 			logs.append(m_logger.logs)
 
 			with open('logs/experiment_logs.json', 'w') as fp:
