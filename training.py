@@ -123,7 +123,7 @@ class GraphTrainer():
 			if use_scheduler:
 				scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, threshold=2e-4, factor=0.1, cooldown=5, min_lr=1e-9)
 
-			valid_loss, valid_roc = self.evaluate(model, sample_set='valid', criterion=criterion)
+			valid_loss, valid_roc = None, None
 
 			epoch_bar = tqdm(range(1, num_epochs+1))
 			for epoch in epoch_bar:
@@ -134,7 +134,7 @@ class GraphTrainer():
 				results_dict = {}
 				results_dict['run'], results_dict['epoch'], results_dict['lr'], results_dict['train_loss'], results_dict['train_roc'], results_dict['valid_loss'], results_dict['valid_roc'] = run, epoch, current_lr, train_loss, train_roc, valid_loss, valid_roc
 
-				if epoch % valid_step == 0:
+				if epoch % valid_step == 0 or epoch == 1:
 					# construct a results dictionary to store training parameters and model performance metrics
 					valid_loss, valid_roc = self.evaluate(model, sample_set='valid', criterion=criterion)
 					results_dict['valid_loss'], results_dict['valid_roc'] = valid_loss, valid_roc

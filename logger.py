@@ -40,7 +40,13 @@ class Logger(object):
 		'''
 		assert filepath.endswith('.json')
 		with open(filepath, 'w') as fp:
-			json.dump(self.logs, fp)	
+			json.dump(self.logs, fp)
+
+	def run_slice(self, run, run_list):
+		run_start = run_list.index(run)
+		run_end = len(run_list) - run_list[::-1].index(run)
+		run_slice = slice(run_start, run_end)
+		return run_slice
 
 	def plot_run(self, run=None, save_path=None):
 		'''
@@ -177,6 +183,21 @@ class Logger(object):
 		with open(filepath) as fp:
 			self.logs = json.load(fp)
 
+	def mean_values(self, metric_list):
+		# pivot the metric list from runlist[epoch[value]] to epoch[runlist[value]] so that we can calculate the mean of the metrics values at each epoch across runs
+		epoch_metric = list(map(list, itertools.zip_longest(*metric_list, fillvalue=None)))
+		epoch_metric[2].append(None)
+
+		# remove Nones
+		for e in range(len(epoch_metric)):
+			epoch_metric[e] = [l for l in epoch_metric[e] if l is not None]
+
+		# calculate mean for each epoch value
+		mean_epoch_metric = list(map(np.mean, epoch_metric))
+		
+		return mean_epoch_metric
+
+
 	def plot_metric(self, metric='valid_loss', save_path=None):
 		'''
 		plot a singluar metric from over multiple runs with a mean line
@@ -210,16 +231,7 @@ class Logger(object):
 				color="lightgrey"
 			)
 
-		# pivot the metric list from runlist[epoch[value]] to epoch[runlist[value]] so that we can calculate the mean of the metrics values at each epoch across runs
-		epoch_metric = list(map(list, itertools.zip_longest(*metric_list, fillvalue=None)))
-		epoch_metric[2].append(None)
-
-		# remove Nones
-		for e in range(len(epoch_metric)):
-			epoch_metric[e] = [l for l in epoch_metric[e] if l is not None]
-
-		# calculate mean for each epoch value
-		mean_epoch_metric = list(map(np.mean, epoch_metric))
+		mean_epoch_metric = self.mean_values(metric_list=metric_list)
 
 		# plot the means
 		plt.plot(range(0, max(self.logs['epoch'])), mean_epoch_metric, label='mean')
@@ -234,4 +246,55 @@ class Logger(object):
 			assert save_path.endswith('eps')
 			plt.savefig(save_path, format='eps')
 		
+		plt.show()
+
+		
+	def plot_experiment_metric_curves(self, filepath, metric='valid_loss'):
+
+		# load experiment logs from file
+		with open(filepath) as json_file:
+			experiment_logs = json.load(json_file)
+
+
+		for log in experiment_logs:
+
+			metric_list = []
+			for run in range(1, log['info']['num_runs']+1):
+				# define the slice range of the desired run
+				run_slice = self.run_slice(run, log['run'])
+				metric_list.append(log[metric][run_slice])
+
+			mean_epoch_metric = self.mean_values(metric_list=metric_list)
+
+			plt.plot(range(0, len(mean_epoch_metric)), mean_epoch_metric, label=log['info']['model_type'])
+
+		plt.xlabel('Epoch')
+		plt.ylabel(metric)
+		plt.legend()
+		plt.show()
+		
+
+	def plot_experiment_comparison(self, filepath, metric='valid_loss', comparitor='trainable_parameters'):
+
+		# load experiment logs from file
+		with open(filepath) as json_file:
+			experiment_logs = json.load(json_file)
+
+		if metric.endswith('loss'):
+			operator = min
+		else:
+			operator = max
+
+		for log in experiment_logs:
+
+			metric_values = []
+			for run in range(1, log['info']['num_runs']+1):
+				# define the slice range of the desired run
+				run_slice = self.run_slice(run, log['run'])
+				best_value = operator(log[metric][run_slice])
+				metric_values.append(best_value)
+
+			plt.plot(log['info'][comparitor], np.mean(metric_values), label = log['info']['model_type'], marker='o')
+
+		plt.legend()
 		plt.show()
