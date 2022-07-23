@@ -24,17 +24,33 @@ class GraphTrainer():
 		self.split_idx = split_idx
 		self.evaluator = Evaluator(name='ogbn-proteins')
 		self.sampler_num_neighbours = sampler_num_neighbours
+		self.label_mask_p = label_mask_p
 
 		# aggregate edge features using mean
 		x = scatter(graph.edge_attr, graph.edge_index[0], dim=0, dim_size=graph.num_nodes, reduce='mean')
 		self.graph.x = x
 		
-		# create label mask
-		train_labels = self.graph.y[self.split_idx['train']]
-		train_mask = torch.rand(train_labels.shape[0]).ge(label_mask_p).unsqueeze(-1)
-		valid_test_mask = torch.zeros(len(self.split_idx['valid']) + len(self.split_idx['test']), 1)
-		mask = torch.cat((train_mask, valid_test_mask), 0)
-		self.graph.known_y = self.graph.y * mask
+		# mask labels
+		self.graph.train_masked_y = self.mask_labels(label_mask_p)
+		self.graph.eval_masked_y = self.mask_labels(0, mask_eval=True)
+
+		valid_labels = {}
+
+#		for idx in tqdm(split_idx['valid']):
+#			# edge indexes of current idx
+#			edge_select = (self.graph.edge_index[1] == idx).int().nonzero().squeeze()
+#			
+#			# edges pointing to current idx
+#			edges = torch.index_select(self.graph.edge_index, 1, edge_select.int())
+#
+#			neighbour_idx = edges[0]
+#			neighbour_labels = torch.index_select(self.graph.known_y, 0, neighbour_idx)
+#			
+#			valid_labels[idx] = neighbour_labels
+#
+#		torch.save(valid_labels, 'valid_labels.pt')
+#
+#		exit()
 
 		# use node2vec embeddings
 		# emb = torch.load('embedding.pt', map_location='cpu')
@@ -59,15 +75,42 @@ class GraphTrainer():
 		)
 		
 		self.valid_loader = NeighborLoader(
-                                self.graph,
-                                num_neighbors=[self.sampler_num_neighbours],
-                                batch_size=self.evaluate_batch_size,
+								self.graph,
+								num_neighbors=[self.sampler_num_neighbours],
+								batch_size=self.evaluate_batch_size,
 								replace=True,
-                                directed=True,
-                                shuffle=False,
+								directed=True,
+								shuffle=False,
 								input_nodes=split_idx['valid'],
-                                #transform=self.transforms,
-        )
+								#transform=self.transforms,
+		)
+	
+	def mask_labels(self, label_mask_p, mask_eval=True):
+		if not mask_eval:
+			raise NotImplemented('unmasked valid and test labels is not implmented')
+
+		# randomly select training points to keep (1) and remove(0)
+		train_labels = self.graph.y[self.split_idx['train']]
+		train_mask = torch.rand(train_labels.shape[0]).ge(label_mask_p).unsqueeze(-1)
+		
+		# remove ALL valid and test labels
+		valid_test_mask = torch.zeros(len(self.split_idx['valid']) + len(self.split_idx['test']), 1)
+
+		# create mask and inverted mask
+		mask = torch.cat((train_mask, valid_test_mask), 0)
+		inverted_mask = torch.ones_like(mask) - mask
+
+		# only keep labels that mask == 1 at
+		observed_y = self.graph.y * mask
+
+		# replace all masked values with tensor of 2's to allow model to learn mask representation
+		masked_y = (torch.ones_like(self.graph.y) * 2) * inverted_mask
+
+		# combine masks
+		known_y = observed_y + masked_y
+
+		return known_y
+
 		
 	def normalise(self):
 		'''
@@ -158,11 +201,12 @@ class GraphTrainer():
 					if current_lr <= 1e-7:
 						break
 
-		logger.print()
 
-		# save logs files
-		if save_log:
-			logger.save("logs/{0}_log.json".format(info['model_type']))
+				# save logs files
+				if save_log:
+					logger.save("logs/{0}_log.json".format(info['model_type']))
+
+		logger.print()
 
 		return logger
 
@@ -184,6 +228,9 @@ class GraphTrainer():
 
 		for batch in self.train_loader:
 			optimizer.zero_grad()
+
+			# mask out all 'source' node labels to avoid label leakage
+			batch.train_masked_y[:batch.batch_size] = torch.ones_like(batch.train_masked_y[:batch.batch_size]) * 2
 
 			# calculate output
 			pred_y = model(batch.to(config.device))[:batch.batch_size]
@@ -228,9 +275,11 @@ class GraphTrainer():
 				raise Exception('trainer.evaluate(): sample_set "' + sample_set + '" not recognited')
 				
 			pred, loss, count = [], 0, 0
+
 			for batch in sample_loader:
 				pred_y = model(batch.to(config.device))[:batch.batch_size]
 				loss += criterion(pred_y, batch.y[:batch.batch_size].to(torch.float)).item()
+				
 				pred.append(pred_y.cpu())
 				count += 1
 

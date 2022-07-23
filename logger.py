@@ -238,7 +238,7 @@ class Logger(object):
 		plt.title(metric)
 		plt.xlabel('Epoch')
 		plt.ylabel(metric)
-		plt.yscale('log')
+#		plt.yscale('log')
 		plt.legend()
 
 		# if save_path is specified then save figure
@@ -295,6 +295,7 @@ class Logger(object):
 				metric_values.append(best_value)
 
 			plt.plot(log['info'][comparitor], np.mean(metric_values), label = log['info']['model_type'], marker='o')
+			print('Model {0} {1}: {2}'.format(log['info']['model_type'], metric, best_value))
 
 		plt.legend()
 		plt.show()

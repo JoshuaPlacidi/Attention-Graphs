@@ -10,15 +10,15 @@ from logger import Logger
 torch.manual_seed(0)
 
 
-# l = Logger()
-#l.load('logs/log.json')
-# l.plot_metric()
-# exit()
+#l = Logger()
+#l.load('logs/ATTN_self_log.json')
+#l.plot_metric('valid_roc')
+#exit()
 # l.plot_run()
 # exit()
-# l.plot_experiment_metric_curves('logs/experiment_logs.json', metric='valid_roc')
-# l.plot_experiment_comparison('logs/experiment_logs.json', metric='valid_roc')
-# exit()
+#l.plot_experiment_metric_curves('logs/experiment_logs.json', metric='valid_roc')
+#l.plot_experiment_comparison('logs/experiment_logs.json', metric='valid_roc')
+#exit()
 
 
 
@@ -32,7 +32,7 @@ torch.manual_seed(0)
 
 graph, split_idx = get_graph_data()
 
-trainer = GraphTrainer(graph, split_idx, train_batch_size=32, sampler_num_neighbours=100)
+trainer = GraphTrainer(graph, split_idx, train_batch_size=32, sampler_num_neighbours=100, label_mask_p=0.8)#0.126)
 #trainer.normalise()
 criterion = torch.nn.BCEWithLogitsLoss()
 
