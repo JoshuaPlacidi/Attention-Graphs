@@ -167,6 +167,8 @@ class Logger(object):
 			valid_losses.append(self.logs['valid_loss'][run_start:run_end][best_idx])
 			valid_rocs.append(self.logs['valid_roc'][run_start:run_end][best_idx])
 
+		print(train_losses)
+
 		# print means and standard deviations over best models from each run
 		print('Results from {0} runs'.format(num_runs))
 		print('Train mean loss {0} +/- {1}'.format(np.mean(train_losses), np.std(train_losses)))

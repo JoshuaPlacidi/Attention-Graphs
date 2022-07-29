@@ -15,7 +15,7 @@ class AttentionGNN(torch.nn.Module):
 	def __init__(
 			self,
 			attention_type = 'self',
-			propagation = 'feature',
+			propagation = 'label_embed',
 			in_dim = 8,
 			hid_dim = 64,
 			out_dim = 112,
@@ -29,7 +29,7 @@ class AttentionGNN(torch.nn.Module):
 							'dropout':dropout}
 
 		# construct layers	
-		attn_layer = AttentionLayer
+		attn_layer = LabelEmbeddingAttentionLayer #LabelFeatureAttentionLayer
 		
 		self.layers = torch.nn.ModuleList()
 		self.layers.append(
@@ -60,18 +60,16 @@ class AttentionGNN(torch.nn.Module):
 		return batch.x
 
 
-class AttentionLayer(MessagePassing):
+class FeatureAttentionLayer(MessagePassing):
 
 	def __init__(
 		self,
 		in_dim: int,
 		out_dim: int,
 		attention_type = 'self',
-		propagation = 'feature',
 		attn_heads: int = 1,
 		dropout: float = 0.1,
 		edge_dim: int = 8,
-		label_dim: int = 112,
 		**kwargs,
 	):
 		kwargs.setdefault('aggr', 'add')
@@ -83,20 +81,20 @@ class AttentionLayer(MessagePassing):
 		self.dropout = dropout
 		self.edge_dim = edge_dim
 		self.label_dim = label_dim
+		self.label_emb_dim = label_emb_dim
 
 		self.lin_query = Linear(in_dim, attn_heads * out_dim)
 		self.lin_key_edge = Linear(edge_dim, attn_heads * out_dim)
 		self.lin_key_node = Linear(in_dim, attn_heads * out_dim)
-		self.lin_key_label = Linear(self.label_dim, attn_heads * out_dim)
 		self.lin_value = Linear(in_dim, attn_heads * out_dim)
-		self.lin_label = Linear(self.label_dim, attn_heads * out_dim)
 		self.lin_skip = Linear(in_dim, attn_heads * out_dim, bias=True)
 
 		self.reset_parameters()
 
 	def reset_parameters(self):
-#		self.lin_key.reset_parameters()
 		self.lin_query.reset_parameters()
+		self.lin_key_edge.reset_parameters()
+		self.lin_key_node.reset_parameters()
 		self.lin_value.reset_parameters()
 		self.lin_skip.reset_parameters()
 
@@ -104,28 +102,17 @@ class AttentionLayer(MessagePassing):
 	def forward(self, batch):
 		H, C = self.heads, self.out_dim
 
-		query = self.lin_query(batch.x).view(-1, H, C)
-		value = self.lin_value(batch.x).view(-1, H, C)
+		feat_q = self.lin_query(batch.x).view(-1, H, C)
+		feat_v = self.lin_value(batch.x).view(-1, H, C)
+		feat_k = self.lin_key_node(batch.x).view(-1, H, C)
 	
-		if self.training:
-			known_y = batch.train_masked_y
-		else:
-			known_y = batch.eval_masked_y
-
-		label = self.lin_label(known_y).view(-1, H, C)
-		
-		key_node = self.lin_key_node(batch.x).view(-1, H, C)
-		key_label = self.lin_key_label(known_y).view(-1, H, C)	
-
 		# propagate_type: (query: Tensor, key:Tensor, value: Tensor, edge_attr: OptTensor) # noqa
 		x = self.propagate(
 				batch.edge_index,
-				query=query,
+				feat_q=feat_q,
+				feat_v=feat_v,
+				feat_k=feat_k,
 				edge_attr=batch.edge_attr,
-				value=value,
-				label=label,
-				key_node=key_node,
-				key_label=key_label,
 				size=None,
 			)
 
@@ -139,28 +126,24 @@ class AttentionLayer(MessagePassing):
 
 	def message(
 			self,
-			query_i: Tensor,
+			feat_q_i: Tensor,
+			feat_v_j: Tensor,
+			feat_k_j: Tensor,
 			edge_attr: Tensor,
-			value_j: Tensor,
-			label_j: Tensor,
-			key_label_j: Tensor,
-			key_node_j: Tensor,
 			index: Tensor,
 			ptr: OptTensor,
 			size_i: Optional[int],
 			) -> Tensor:
 
-		key_edge = self.lin_key_edge(edge_attr).view(-1, self.heads, self.out_dim)
+		edge_k = self.lin_key_edge(edge_attr).view(-1, self.heads, self.out_dim)
 
-		f = self.feature_attention(node_i=query_i, edge=key_edge, node_j=value_j, key_j=key_node_j, index=index)
+		m = self.feature_attention(q=feat_q_i, k=feat_k_j, v=feat_v_j, e=edge_k, index=index)
 
-		l = self.label_attention(node_i=query_i, edge=key_edge, label_j=label_j, key_label=key_node_j, index=index)
-		m = f + l
 		return m
 
-	def feature_attention(self, node_i, edge, node_j, key_j, index):
+	def feature_attention(self, q, k, v, e, index):
 		# calculate raw attention scores
-		x = node_i * (edge + key_j)
+		x = q * (e + k)
 		x = x.sum(dim=-1)
 		x = x / math.sqrt(self.out_dim)
 
@@ -169,40 +152,276 @@ class AttentionLayer(MessagePassing):
 		alpha = F.dropout(alpha, p=self.dropout, training=self.training)
 
 		# apply weighted score to neighbour values
-		x = node_j * alpha.view(-1, self.heads, 1)
+		x = v * alpha.view(-1, self.heads, 1)
 
 		return x
 
-	def label_attention(self, node_i, edge, label_j, key_label, index):
-# element-wise label attention
-#		label_j = label_j.view(-1, self.out_dim) 
-#		node_i = node_i.repeat(1,112,1).view(-1, self.out_dim)
-#		print('label_j', label_j.shape)
-#		print('node_i', node_i.shape)
 
-#		x = node_i * edge
-#		x = x.sum(dim=-1)
-#		x = x / math.sqrt(self.out_dim)
-#		x.view(-1, self.label_dim, 64)
+class LabelInjectionAttentionLayer(MessagePassing):
 
-#		print(x.shape)
-#		x = node_i *
-		x = node_i * (edge + key_label)
+	def __init__(
+		self,
+		in_dim: int,
+		out_dim: int,
+		attention_type = 'self',
+		propagation = 'feature',
+		attn_heads: int = 1,
+		dropout: float = 0.1,
+		edge_dim: int = 8,
+		label_dim: int = 112,
+		label_k_dim: int = 8,
+		**kwargs,
+	):
+		kwargs.setdefault('aggr', 'add')
+		super(LabelInjectionAttentionLayer, self).__init__(node_dim=0, **kwargs)
+
+		self.in_dim = in_dim
+		self.out_dim = out_dim
+		self.heads = attn_heads
+		self.dropout = dropout
+		self.edge_dim = edge_dim
+		self.label_dim = label_dim
+
+		# feature layers
+		self.lin_query = Linear(in_dim, attn_heads * out_dim)
+		self.lin_key_edge = Linear(edge_dim, attn_heads * out_dim)
+		self.lin_key_node = Linear(in_dim, attn_heads * out_dim)
+		self.lin_value = Linear(in_dim, attn_heads * out_dim)
+		self.lin_skip = Linear(in_dim, attn_heads * out_dim, bias=True)
+
+		# label layers
+		self.lin_label = Linear(self.label_dim, in_dim, bias=False)
+
+		self.reset_parameters()
+
+	def reset_parameters(self):
+#		self.lin_key.reset_parameters()
+		self.lin_query.reset_parameters()
+		self.lin_value.reset_parameters()
+		self.lin_skip.reset_parameters()
+
+
+	def forward(self, batch):
+		H, C = self.heads, self.out_dim
+
+		x = batch.x
+
+		if self.training:
+			known_y = batch.train_masked_y	
+		else:
+			known_y = batch.eval_masked_y
+		
+		#label = self.lin_label(known_y)
+
+		#x = x + label
+		
+		feat_q = self.lin_query(batch.x).view(-1, H, C)
+		feat_v = self.lin_value(batch.x).view(-1, H, C)
+		feat_k = self.lin_key_node(batch.x).view(-1, H, C)
+	
+		# propagate_type: (query: Tensor, key:Tensor, value: Tensor, edge_attr: OptTensor) # noqa
+		x = self.propagate(
+				batch.edge_index,
+				feat_q=feat_q,
+				feat_v=feat_v,
+				feat_k=feat_k,
+				edge_attr=batch.edge_attr,
+				size=None,
+			)
+
+		x = x.view(-1, self.heads * self.out_dim)
+
+		x_skip = self.lin_skip(batch.x)
+
+		x += x_skip
+
+		return x
+
+	def message(
+			self,
+			feat_q_i: Tensor,
+			feat_v_j: Tensor,
+			feat_k_j: Tensor,
+			edge_attr: Tensor,
+			index: Tensor,
+			ptr: OptTensor,
+			size_i: Optional[int],
+			) -> Tensor:
+
+		edge_k = self.lin_key_edge(edge_attr).view(-1, self.heads, self.out_dim)
+
+		m = self.self_attention(q=feat_q_i, k=feat_k_j, v=feat_v_j, e=edge_k, index=index)
+
+		return m
+
+	def self_attention(self, q, k, v, e, index):
+		# calculate raw attention scores
+		x = q * (e + k)
 		x = x.sum(dim=-1)
 		x = x / math.sqrt(self.out_dim)
-		
+
+		# normalise attention scores using softmax
 		alpha = softmax(x, index)
 		alpha = F.dropout(alpha, p=self.dropout, training=self.training)
 
-		x = label_j * alpha.view(-1, self.heads, 1)
+		# apply weighted score to neighbour values
+		x = v * alpha.view(-1, self.heads, 1)
 
 		return x
-		
 
-	def mlp_attention(self, node_i, node_j, edge, label_j):
-		raise NotImplemented
-		# x = torch.concat([node_i, node_j, edge, label_j], dim=-1)
-		# x = 
+	def __repr__(self) -> str:
+		return (f'{self.__class__.__name__}({self.in_channels}, '
+				f'{self.out_channels}, heads={self.heads})')
+
+
+class LabelEmbeddingAttentionLayer(MessagePassing):
+
+	def __init__(
+		self,
+		in_dim: int,
+		out_dim: int,
+		attention_type = 'self',
+		propagation = 'both',
+		attn_heads: int = 1,
+		dropout: float = 0.1,
+		edge_dim: int = 8,
+		label_dim: int = 112,
+		label_emb_dim: int = 8,
+		label_k: int = 4,
+		**kwargs,
+	):
+		kwargs.setdefault('aggr', 'add')
+		super(LabelEmbeddingAttentionLayer, self).__init__(node_dim=0, **kwargs)
+
+		self.in_dim = in_dim
+		self.out_dim = out_dim
+		self.heads = attn_heads
+		self.dropout = dropout
+		self.edge_dim = edge_dim
+		self.label_dim = label_dim
+		self.label_k = label_k
+
+		# feature layers
+		self.lin_query = Linear(in_dim, attn_heads * out_dim)
+		self.lin_key_edge = Linear(edge_dim, attn_heads * out_dim)
+		self.lin_key_node = Linear(in_dim, attn_heads * out_dim)
+		self.lin_value = Linear(in_dim, attn_heads * out_dim)
+		self.lin_skip = Linear(in_dim, attn_heads * out_dim, bias=True)
+
+		# label layers
+		self.lin_label = Linear(self.label_dim, in_dim, bias=False)
+		self.emb_label = torch.nn.Parameter(torch.randn(label_dim, out_dim))
+		self.emb_label.required_grad = True
+		torch.nn.init.xavier_uniform(self.emb_label)
+		self.lin_label_to_k = Linear(self.label_dim, label_k)
+		self.lin_k_to_out = Linear(label_k, out_dim)
+		self.label_softmax = torch.nn.Softmax(dim=1)
+
+		self.reset_parameters()
+
+	def reset_parameters(self):
+#		self.lin_key.reset_parameters()
+		self.lin_query.reset_parameters()
+		self.lin_value.reset_parameters()
+		self.lin_skip.reset_parameters()
+
+
+	def forward(self, batch):
+		H, C = self.heads, self.out_dim
+
+		x = batch.x
+
+		if self.training:
+			known_y = batch.train_masked_y	
+		else:
+			known_y = batch.eval_masked_y
+		
+		#label = self.lin_label(known_y)
+
+		#x = x + label
+		
+		feat_q = self.lin_query(batch.x).view(-1, H, C)
+		feat_v = self.lin_value(batch.x).view(-1, H, C)
+		feat_k = self.lin_key_node(batch.x).view(-1, H, C)
+	
+		# propagate_type: (query: Tensor, key:Tensor, value: Tensor, edge_attr: OptTensor) # noqa
+		x = self.propagate(
+				batch.edge_index,
+				feat_q=feat_q,
+				feat_v=feat_v,
+				feat_k=feat_k,
+				edge_attr=batch.edge_attr,
+				label = known_y,
+				size=None,
+			)
+
+		x = x.view(-1, self.heads * self.out_dim)
+
+		x_skip = self.lin_skip(batch.x)
+
+		x += x_skip
+
+		return x
+
+	def message(
+			self,
+			feat_q_i: Tensor,
+			feat_v_j: Tensor,
+			feat_k_j: Tensor,
+			edge_attr: Tensor,
+			label_j: Tensor,
+			index: Tensor,
+			ptr: OptTensor,
+			size_i: Optional[int],
+			) -> Tensor:
+
+		edge_k = self.lin_key_edge(edge_attr).view(-1, self.heads, self.out_dim)
+
+		f = self.self_attention(q=feat_q_i, k=feat_k_j, v=feat_v_j, e=edge_k, index=index)
+		l = self.label_attention(q=feat_q_i, l=label_j, e=edge_k, index=index) 
+#		print('f:\n',f[0])
+#		print('l:\n',l[0])
+#		print('emb:\n',self.emb_label)
+#		print('\n\n')
+
+		return l
+
+	def self_attention(self, q, k, v, e, index):
+		# calculate raw attention scores
+		x = q * (e + k)
+		x = x.sum(dim=-1)
+		x = x / math.sqrt(self.out_dim)
+
+		# normalise attention scores using softmax
+		alpha = softmax(x, index)
+		alpha = F.dropout(alpha, p=self.dropout, training=self.training)
+
+		# apply weighted score to neighbour values
+		x = v * alpha.view(-1, self.heads, 1)
+		return x
+
+	def label_attention(self, q, l, e, index):
+		# multiply label by embedding matrix (acts as a mask)
+		embedded_labels = l.unsqueeze(-1) * self.emb_label
+		embedded_labels = embedded_labels
+
+		# project sequence dimension to k
+		k_labels = self.lin_label_to_k(embedded_labels.permute(0,2,1)).permute(0,2,1)
+
+		# self-attention
+		q = q.repeat(1, self.label_k, 1)
+		x = q * (e + k_labels)
+		x = x.sum(dim=-1)
+		x = x / math.sqrt(self.label_k)
+
+		alpha = self.label_softmax(x)
+		alpha = F.dropout(alpha, p=self.dropout, training=self.training)
+
+		x = x * alpha
+		x = self.lin_k_to_out(x).unsqueeze(1) 
+		
+		return x	
+		
 
 	def __repr__(self) -> str:
 		return (f'{self.__class__.__name__}({self.in_channels}, '

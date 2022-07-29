@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+from torch_geometric.nn.dense.linear import Linear
 
 from torch_geometric.nn import GCNConv, SAGEConv, GATConv, TransformerConv
 
@@ -17,6 +18,7 @@ class GNN(torch.nn.Module):
 	def __init__(
 			self,
 			conv_type = 'GCN',
+			propagation = 'feature',
 			in_dim = 8,
 			hid_dim = 64,
 			out_dim = 112,
@@ -26,9 +28,14 @@ class GNN(torch.nn.Module):
 		super(GNN, self).__init__()
 
 		# create a parameter dictionary to store information about the model, used for logging experiments
-		self.param_dict = {'model_type':'GNN_' + conv_type, 'in_dim':in_dim, 'hid_dim':hid_dim, 'out_dim':out_dim, 'layers':num_layers,
+		self.param_dict = {'model_type':'GNN_' + conv_type, 'propagation':propagation, 'in_dim':in_dim, 'hid_dim':hid_dim, 'out_dim':out_dim, 'layers':num_layers,
 							'dropout':dropout}
 		
+		self.propagation = propagation
+		if self.propagation == 'both':
+			self.lin_x = Linear(8, in_dim//2)
+			self.lin_label = Linear(112, in_dim-(in_dim//2), bias=False)
+	
 		# set the convolutional layer type to use in the model
 		if conv_type == 'GCN':
 			layer = GCNConv
@@ -36,7 +43,7 @@ class GNN(torch.nn.Module):
 			layer = SAGEConv
 		elif conv_type == 'GAT':
 			layer = GATConv
-		elif conv_type == 'TransformerConv':
+		elif conv_type == 'TFC':
 			layer = TransformerConv
 		else:
 			raise Exception('GNN model type "' + conv_type + '" not recognized')
@@ -61,11 +68,31 @@ class GNN(torch.nn.Module):
 			layer.reset_parameters()
 
 	def forward(self, batch):
+		if self.propagation == 'feature':
+			x = batch.x
+		elif self.propagation == 'label' or self.propagation == 'both':
+			if self.training:
+				label = batch.train_masked_y
+			else:
+				label = batch.eval_masked_y
+
+			if self.propagation == 'both':
+				x = self.lin_x(batch.x)
+				label = self.lin_label(label)
+
+				x = torch.cat([x,label], dim=1)
+				#x = x + label
+			else:
+				x = label
+
+		elif self.propation == 'both':
+			raise NotImplemented
+
 		for layer in self.layers[:-1]:
-			batch.x = layer(batch.x, batch.edge_index)
-			batch.x = F.relu(batch.x)
-			batch.x = F.dropout(batch.x, p=self.dropout, training=self.training)
-		batch.x = self.layers[-1](batch.x, batch.edge_index)
-		return batch.x
+			x = layer(x, batch.edge_index)
+			x = F.relu(x)
+			x = F.dropout(x, p=self.dropout, training=self.training)
+		x = self.layers[-1](x, batch.edge_index)
+		return x
 
 

@@ -31,10 +31,12 @@ class GraphTrainer():
 		self.graph.x = x
 		
 		# mask labels
-		self.graph.train_masked_y = self.mask_labels(label_mask_p)
-		self.graph.eval_masked_y = self.mask_labels(0, mask_eval=True)
+		self.graph.train_masked_y, _ = self.mask_labels(label_mask_p)
+		self.graph.eval_masked_y, _ = self.mask_labels(0, mask_eval=True)
 
-		valid_labels = {}
+		
+
+#		valid_labels = {}
 
 #		for idx in tqdm(split_idx['valid']):
 #			# edge indexes of current idx
@@ -101,15 +103,16 @@ class GraphTrainer():
 		inverted_mask = torch.ones_like(mask) - mask
 
 		# only keep labels that mask == 1 at
+		# observed_y = (self.graph.y + torch.ones_like(self.graph.y)) * mask
 		observed_y = self.graph.y * mask
 
 		# replace all masked values with tensor of 2's to allow model to learn mask representation
 		masked_y = (torch.ones_like(self.graph.y) * 2) * inverted_mask
 
 		# combine masks
-		known_y = observed_y + masked_y
-
-		return known_y
+		known_y = observed_y #+ masked_y
+		
+		return known_y, mask
 
 		
 	def normalise(self):
