@@ -385,7 +385,7 @@ class LabelEmbeddingAttentionLayer(MessagePassing):
 
 		edge_k = self.lin_key_edge(edge_attr).view(-1, self.heads, self.out_dim)
 
-		#f = self.feature_attention(q=feat_q_i, k=feat_k_j, v=feat_v_j, e=edge_k, index=index)
+		f = self.feature_attention(q=feat_q_i, k=feat_k_j, v=feat_v_j, e=edge_k, index=index)
 		l = self.label_attention(q=feat_q_i, l=label_j, e=edge_k, mask=mask_j, index=index) 
 		
 		m = torch.cat([f,l], dim=-1)
@@ -421,7 +421,7 @@ class LabelEmbeddingAttentionLayer(MessagePassing):
 		x = x / math.sqrt(self.label_k)
 
 		inf_mask = mask * -np.inf
-		inf_mask[np.isnan(inf_mask)] = 0
+		inf_mask = torch.nan_to_num(inf_mask, 0)
 
 		x += inf_mask
 
