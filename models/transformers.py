@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 from torch import Tensor
 from torch_sparse import SparseTensor
+import numpy as np
 
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.nn.dense.linear import Linear
@@ -317,6 +318,8 @@ class LabelEmbeddingAttentionLayer(MessagePassing):
 		self.lin_k_to_out = Linear(label_k, out_dim)
 		self.label_softmax = torch.nn.Softmax(dim=1)
 
+		self.lin_comb = Linear(out_dim*3, out_dim)
+
 		self.reset_parameters()
 
 	def reset_parameters(self):
@@ -332,9 +335,9 @@ class LabelEmbeddingAttentionLayer(MessagePassing):
 		x = batch.x
 
 		if self.training:
-			known_y = batch.train_masked_y	
+			mask = batch.train_mask
 		else:
-			known_y = batch.eval_masked_y
+			mask = batch.eval_mask
 		
 		#label = self.lin_label(known_y)
 
@@ -345,21 +348,25 @@ class LabelEmbeddingAttentionLayer(MessagePassing):
 		feat_k = self.lin_key_node(batch.x).view(-1, H, C)
 	
 		# propagate_type: (query: Tensor, key:Tensor, value: Tensor, edge_attr: OptTensor) # noqa
-		x = self.propagate(
+		m = self.propagate(
 				batch.edge_index,
 				feat_q=feat_q,
 				feat_v=feat_v,
 				feat_k=feat_k,
 				edge_attr=batch.edge_attr,
-				label = known_y,
+				label = batch.y,
+				mask = mask,
 				size=None,
 			)
 
-		x = x.view(-1, self.heads * self.out_dim)
-
+		m = m.squeeze()
 		x_skip = self.lin_skip(batch.x)
 
-		x += x_skip
+		#print(batch.x.shape, m.shape)
+
+		x = torch.cat([x_skip, m], dim=-1)
+		
+		x = self.lin_comb(x)
 
 		return x
 
@@ -370,6 +377,7 @@ class LabelEmbeddingAttentionLayer(MessagePassing):
 			feat_k_j: Tensor,
 			edge_attr: Tensor,
 			label_j: Tensor,
+			mask_j: Tensor,
 			index: Tensor,
 			ptr: OptTensor,
 			size_i: Optional[int],
@@ -377,16 +385,14 @@ class LabelEmbeddingAttentionLayer(MessagePassing):
 
 		edge_k = self.lin_key_edge(edge_attr).view(-1, self.heads, self.out_dim)
 
-		f = self.self_attention(q=feat_q_i, k=feat_k_j, v=feat_v_j, e=edge_k, index=index)
-		l = self.label_attention(q=feat_q_i, l=label_j, e=edge_k, index=index) 
-#		print('f:\n',f[0])
-#		print('l:\n',l[0])
-#		print('emb:\n',self.emb_label)
-#		print('\n\n')
+		#f = self.feature_attention(q=feat_q_i, k=feat_k_j, v=feat_v_j, e=edge_k, index=index)
+		l = self.label_attention(q=feat_q_i, l=label_j, e=edge_k, mask=mask_j, index=index) 
+		
+		m = torch.cat([f,l], dim=-1)
 
-		return l
+		return m
 
-	def self_attention(self, q, k, v, e, index):
+	def feature_attention(self, q, k, v, e, index):
 		# calculate raw attention scores
 		x = q * (e + k)
 		x = x.sum(dim=-1)
@@ -400,7 +406,7 @@ class LabelEmbeddingAttentionLayer(MessagePassing):
 		x = v * alpha.view(-1, self.heads, 1)
 		return x
 
-	def label_attention(self, q, l, e, index):
+	def label_attention(self, q, l, e, mask, index):
 		# multiply label by embedding matrix (acts as a mask)
 		embedded_labels = l.unsqueeze(-1) * self.emb_label
 		embedded_labels = embedded_labels
@@ -413,6 +419,9 @@ class LabelEmbeddingAttentionLayer(MessagePassing):
 		x = q * (e + k_labels)
 		x = x.sum(dim=-1)
 		x = x / math.sqrt(self.label_k)
+		x = x + (mask * -np.inf)
+		print(x)
+		exit()
 
 		alpha = self.label_softmax(x)
 		alpha = F.dropout(alpha, p=self.dropout, training=self.training)

@@ -33,8 +33,8 @@ class GNN(torch.nn.Module):
 		
 		self.propagation = propagation
 		if self.propagation == 'both':
-			self.lin_x = Linear(8, in_dim//2)
-			self.lin_label = Linear(112, in_dim-(in_dim//2), bias=False)
+			#self.lin_x = Linear(8, in_dim//2)
+			self.lin_label = Linear(112, 8, bias=False)
 	
 		# set the convolutional layer type to use in the model
 		if conv_type == 'GCN':
@@ -77,10 +77,10 @@ class GNN(torch.nn.Module):
 				label = batch.eval_masked_y
 
 			if self.propagation == 'both':
-				x = self.lin_x(batch.x)
+				#x = self.lin_x(batch.x)
 				label = self.lin_label(label)
 
-				x = torch.cat([x,label], dim=1)
+				x = torch.cat([batch.x,label], dim=1)
 				#x = x + label
 			else:
 				x = label
