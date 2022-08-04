@@ -138,7 +138,7 @@ class Logger(object):
 			plt.savefig(p + '.eps', format='eps')	
 			plt.show()
 
-	def print(self):
+	def print(self, round_to=None):
 		'''
 		print overview of results from logs
 		'''
@@ -167,14 +167,24 @@ class Logger(object):
 			valid_losses.append(self.logs['valid_loss'][run_start:run_end][best_idx])
 			valid_rocs.append(self.logs['valid_roc'][run_start:run_end][best_idx])
 
-		print(train_losses)
-
 		# print means and standard deviations over best models from each run
+		train_loss_mean, train_loss_std = np.mean(train_losses), np.std(train_losses)
+		train_roc_mean, train_roc_std = np.mean(train_rocs), np.std(train_rocs)
+		valid_loss_mean, valid_loss_std = np.mean(valid_losses), np.std(valid_losses)
+		valid_roc_mean, valid_roc_std = np.mean(valid_rocs), np.std(valid_rocs)		
+
+		if round_to:
+			train_loss_mean, train_loss_std = round(train_loss_mean, round_to), round(train_loss_std, round_to)
+		train_roc_mean, train_roc_std = round(train_roc_mean, round_to), round(train_roc_std, round_to)
+		valid_loss_mean, valid_loss_std = round(valid_loss_mean, round_to), round(valid_loss_std, round_to)
+		valid_roc_mean, valid_roc_std = round(valid_roc_mean, round_to), round(valid_roc_std, round_to)
+
+
 		print('Results from {0} runs'.format(num_runs))
-		print('Train mean loss {0} +/- {1}'.format(np.mean(train_losses), np.std(train_losses)))
-		print('Train mean roc  {0} +/- {1}'.format(np.mean(train_rocs), np.std(train_rocs)))
-		print('Valid mean loss {0} +/- {1}'.format(np.mean(valid_losses), np.std(valid_losses)))
-		print('Valid mean roc  {0} +/- {1}'.format(np.mean(valid_rocs), np.std(valid_rocs)))
+		print('Train mean loss {0} \pm {1}'.format(train_loss_mean, train_loss_std))
+		print('Train mean roc  {0} \pm {1}'.format(train_roc_mean, train_roc_std))
+		print('Valid mean loss {0} \pm {1}'.format(valid_loss_mean, valid_loss_std))
+		print('Valid mean roc  {0} \pm {1}'.format(valid_roc_mean, valid_roc_std))
 
 	def load(self, filepath):
 		'''
@@ -301,3 +311,15 @@ class Logger(object):
 
 		plt.legend()
 		plt.show()
+
+	
+	def print_experiment(self, filepath):
+		
+		with open(filepath) as json_file:
+			experiment_logs = json.load(json_file)
+
+		for log in experiment_logs:
+			print(log['info']['model_type'])
+			self.logs = log
+			self.print(round_to=3)
+			print('\n')
