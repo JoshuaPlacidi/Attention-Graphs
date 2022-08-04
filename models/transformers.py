@@ -386,7 +386,12 @@ class LabelEmbeddingAttentionLayer(MessagePassing):
 		edge_k = self.lin_key_edge(edge_attr).view(-1, self.heads, self.out_dim)
 
 		f = self.feature_attention(q=feat_q_i, k=feat_k_j, v=feat_v_j, e=edge_k, index=index)
-		l = self.label_attention(q=feat_q_i, l=label_j, e=edge_k, mask=mask_j, index=index) 
+		l = self.label_attention(q=feat_q_i, l=label_j, e=edge_k, mask=mask_j, index=index)
+
+		# print('mask', mask_j[:10])
+		# print('l out', l[:10])
+
+		#print('l', l)
 		
 		m = torch.cat([f,l], dim=-1)
 
@@ -403,8 +408,9 @@ class LabelEmbeddingAttentionLayer(MessagePassing):
 		alpha = F.dropout(alpha, p=self.dropout, training=self.training)
 
 		# apply weighted score to neighbour values
-		x = v * alpha.view(-1, self.heads, 1)
-		return x
+		out = v * alpha.view(-1, self.heads, 1)
+
+		return out
 
 	def label_attention(self, q, l, e, mask, index):
 		# multiply label by embedding matrix (acts as a mask)
@@ -423,15 +429,13 @@ class LabelEmbeddingAttentionLayer(MessagePassing):
 		inf_mask = mask * -np.inf
 		inf_mask = torch.nan_to_num(inf_mask, 0)
 
-		x += inf_mask
-
-		alpha = self.label_softmax(x)
+		alpha = self.label_softmax(x + inf_mask)
 		alpha = F.dropout(alpha, p=self.dropout, training=self.training)
 
-		x = x * alpha
-		x = self.lin_k_to_out(x).unsqueeze(1) 
+		out = k_labels * alpha.view(-1, self.label_k, 1)
+		out = out.sum(dim=1).view(-1, 1, self.out_dim)
 		
-		return x	
+		return out	
 		
 
 	def __repr__(self) -> str:
