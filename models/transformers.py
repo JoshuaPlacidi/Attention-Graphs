@@ -419,9 +419,11 @@ class LabelEmbeddingAttentionLayer(MessagePassing):
 		x = q * (e + k_labels)
 		x = x.sum(dim=-1)
 		x = x / math.sqrt(self.label_k)
-		x = x + (mask * -np.inf)
-		print(x)
-		exit()
+
+		inf_mask = mask * -np.inf
+		inf_mask[np.isnan(inf_mask)] = 0
+
+		x += inf_mask
 
 		alpha = self.label_softmax(x)
 		alpha = F.dropout(alpha, p=self.dropout, training=self.training)
