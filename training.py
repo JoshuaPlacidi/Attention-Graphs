@@ -11,16 +11,29 @@ import config
 
 class GraphTrainer():
 	'''
-	Class for full batch graph training 
+	Class for subgraph batch training
 	'''
-	def __init__(self, graph, split_idx, train_batch_size=64, evaluate_batch_size=None, label_mask_p=0.5, train_neighbour_size=[100], valid_neighbour_size=[100]):
+	def __init__(self,
+			  graph,
+			  split_idx,
+			  train_batch_size=64,
+			  evaluate_batch_size=None,
+			  label_mask_p=0.5,
+			  train_neighbour_size=[100],
+			  valid_neighbour_size=[100],
+		):
 		'''
 		params:
-			- graph dataset
-			- dictionary for storing the sample splits (train | valid | test) indexes
+			- graph: pytorch geometric graph object
+			- split_idx: dictionary for storing the sample splits (train | valid | test) indexes
+			- train_batch_size: the batch size to be used for training
+			- evaluate_batch_size: the batch size to be used when evaluating a model
+			- label_mask_p: the probability of masking out node labels at training time
+			- train_neighbour_size: list of number of nodes to sample at each neighbour order when training
+			- valid_neighbour_Size: list of number of nodes to sample at each neighbour order during validation
 		'''
-#		graph.num_nodes = torch.tensor(graph.num_nodes)
-		self.graph = graph#.to(config.device)
+
+		self.graph = graph
 		self.split_idx = split_idx
 		self.evaluator = Evaluator(name='ogbn-proteins')
 		self.train_neighbour_size = train_neighbour_size
@@ -29,43 +42,18 @@ class GraphTrainer():
 
 		# aggregate edge features using mean
 		x = scatter(graph.edge_attr, graph.edge_index[0], dim=0, dim_size=graph.num_nodes, reduce='mean')
+		self.graph.edge_attr = None
 		self.graph.x = x
 		
 		# mask labels
 		self.graph.train_mask = self.label_mask(label_mask_p, mask_eval=True)
 		self.graph.eval_mask = self.label_mask(0, mask_eval=True)
 
-		
-
-#		valid_labels = {}
-
-#		for idx in tqdm(split_idx['valid']):
-#			# edge indexes of current idx
-#			edge_select = (self.graph.edge_index[1] == idx).int().nonzero().squeeze()
-#			
-#			# edges pointing to current idx
-#			edges = torch.index_select(self.graph.edge_index, 1, edge_select.int())
-#
-#			neighbour_idx = edges[0]
-#			neighbour_labels = torch.index_select(self.graph.known_y, 0, neighbour_idx)
-#			
-#			valid_labels[idx] = neighbour_labels
-#
-#		torch.save(valid_labels, 'valid_labels.pt')
-#
-#		exit()
-
-		# use node2vec embeddings
-		# emb = torch.load('embedding.pt', map_location='cpu')
-		# x = torch.cat([x, emb], dim=-1)
-		
-		# self.transforms = T.Compose([T.ToSparseTensor(remove_edge_index=True)])
-		# self.graph = self.transforms(self.graph)
-
+		# set batch sizes
 		self.train_batch_size = train_batch_size
 		self.evaluate_batch_size = evaluate_batch_size if evaluate_batch_size else train_batch_size
 		
-		# set feature variables
+		# create sub graph sampler objects
 		self.train_loader = NeighborLoader(
 								self.graph,
 								num_neighbors=self.train_neighbour_size,
@@ -74,7 +62,6 @@ class GraphTrainer():
 								replace=True,
 								shuffle=True,
 								input_nodes=split_idx['train'],
-								#transform=self.transforms,
 		)
 		
 		self.valid_loader = NeighborLoader(
@@ -85,10 +72,18 @@ class GraphTrainer():
 								directed=True,
 								shuffle=False,
 								input_nodes=split_idx['valid'],
-								#transform=self.transforms,
 		)
 	
 	def label_mask(self, label_mask_p, mask_eval=True):
+		'''
+		Create a label mask for each node, where 0 means no mask is applied and 1 masks out that nodes label
+		params:
+			- label_mask_p: the probability of masking out a nodes label
+			- mask_eval: if True all validation and testing nodes have their labels masked, if False they are masked with label_mask_p probability
+		
+		returns:
+			- mask: tensor where a 0 at index i means node i will not be masked, a 1 at index i means node i will be masked
+		'''
 		if not mask_eval:
 			raise NotImplemented('unmasked valid and test labels is not implmented')
 
@@ -104,32 +99,37 @@ class GraphTrainer():
 		mask = torch.cat((train_mask, valid_test_mask), 0)
 
 		return mask
-
-
-		inverted_mask = torch.ones_like(mask) - mask
-
-		# only keep labels that mask == 1 at
-		#observed_y = (self.graph.y + torch.ones_like(self.graph.y)) * mask
-		observed_y = (self.graph.y) * mask
-
-		# replace all masked values with tensor of 2's to allow model to learn mask representation
-		masked_y = (torch.ones_like(self.graph.y) * 2) * inverted_mask
-
-		# combine masks
-		known_y = observed_y #+ masked_y
-		
-		return known_y, mask
 	
 	def count_parameters(self, model):
+		'''
+		Counts the number of trainable parameters in a pytorch model
+		params:
+			model: torch.nn.Module object to count the number of parameters of
+
+		returns:
+			total_params: integer of number of parameters
+		'''
 		total_params = 0
 		for _, parameter in model.named_parameters():
-			if not parameter.requires_grad: 
+
+			# only count parameters that are trainable
+			if not parameter.requires_grad:
 				continue
+
 			param = parameter.numel()
 			total_params+=param
 		return total_params
 
-	def train(self, model, criterion, num_runs=1, num_epochs=10, lr=1e-3, use_scheduler=True, save_log=False, valid_step=5):
+	def train(self,
+		   model,
+		   criterion,
+		   num_runs=1,
+		   num_epochs=10,
+		   lr=1e-3,
+		   use_scheduler=True,
+		   save_log=False,
+		   valid_step=5
+		):
 		'''
 		train a model in full batch graph mode
 		params:
@@ -139,12 +139,14 @@ class GraphTrainer():
 			- num_epochs: number of epochs to train for in each run
 			- lr: initial learning rate
 			- use_scheduler: whether to incremently decrease learning rate or not
-			- save_log: if model
- logs should be saved to file
+			- save_log: if model logs should be saved to file
+
 		returns:
 			Logger object with logs of the total training cycle
 		'''
 		torch.manual_seed(0)
+		model.to(config.device)
+
 		# store model and training information and save it in the logger
 		info = model.param_dict
 		info['num_runs'] = num_runs
@@ -158,9 +160,7 @@ class GraphTrainer():
 		info['use_scheduler'] = use_scheduler
 
 		print('Training config: {0}'.format(info))
-		
 		logger = Logger(info=model.param_dict)
-		model.to(config.device)
 
 		# perform a new training experiement for each run, reseting the model parameters each time
 		for run in range(1, num_runs+1):
@@ -182,16 +182,25 @@ class GraphTrainer():
 				train_loss, train_roc = self.train_pass(model, optimizer, criterion)
 				current_lr = optimizer.param_groups[0]['lr']
 
+				# save results to dictionary object
 				results_dict = {}
-				results_dict['run'], results_dict['epoch'], results_dict['lr'], results_dict['train_loss'], results_dict['train_roc'], results_dict['valid_loss'], results_dict['valid_roc'] = run, epoch, current_lr, train_loss, train_roc, valid_loss, valid_roc
+				results_dict['run'] = run
+				results_dict['epoch'] = epoch
+				results_dict['lr'] = current_lr
+				results_dict['train_loss'] = train_loss
+				results_dict['train_roc'] = train_roc
+				results_dict['valid_loss'] = valid_loss
+				results_dict['valid_roc'] = valid_roc
 
 				if epoch % valid_step == 0 or epoch == 1:
 					# construct a results dictionary to store training parameters and model performance metrics
 					valid_loss, valid_roc = self.evaluate(model, sample_set='valid', criterion=criterion)
 					results_dict['valid_loss'], results_dict['valid_roc'] = valid_loss, valid_roc
 				
+				# log results
 				logger.log(results_dict)
 
+				# update tqdm bar
 				epoch_bar.set_description(
 					"E {0}: LR({1}), T{2}, V{3}".format(
 						epoch,
@@ -200,7 +209,7 @@ class GraphTrainer():
 						(round(results_dict['valid_loss'],5), round(results_dict['valid_roc'],5))
 					))
 
-
+				# if using shceduler then update it
 				if use_scheduler:
 					scheduler.step(results_dict['valid_loss'])
 
@@ -213,6 +222,7 @@ class GraphTrainer():
 				if save_log:
 					logger.save("logs/{0}_log.json".format(info['model_type']))
 
+		# print logs
 		logger.print()
 
 		return logger
@@ -225,10 +235,13 @@ class GraphTrainer():
 			- model: PyTorch model to train
 			- optimizer: optimizer to use to update weights
 			- criterion: object to calculate loss between target and model output
+
 		returns:
 			Float of loss of the model on the train set
 		'''
 		model.train()
+
+		# initialise evaluation evaluation trackers
 		total_loss, count = 0, 0
 		pred = []
 		gts = []
@@ -236,12 +249,10 @@ class GraphTrainer():
 		for batch in self.train_loader:
 			optimizer.zero_grad()
 
-			# mask out all 'source' node labels to avoid label leakage
-			#batch.train_masked_y[:batch.batch_size] = torch.ones_like(batch.train_masked_y[:batch.batch_size]) * 2
-
 			# calculate output
 			pred_y = model(batch.to(config.device))[:batch.batch_size]
 
+			# store predictions and ground truths
 			pred.append(pred_y.cpu())
 			gts.append(batch.y[:batch.batch_size])
 
@@ -253,6 +264,7 @@ class GraphTrainer():
 			total_loss += loss.item()
 			count += 1
 
+		# evaluate the model predictions against ground truths
 		train_loss = total_loss / count
 		train_roc = self.evaluator.eval({
 									'y_true': torch.cat(gts, dim=0),
@@ -263,13 +275,21 @@ class GraphTrainer():
 			
 		
 
-	def evaluate(self, model, sample_set='valid', criterion=torch.nn.BCEWithLogitsLoss(), save_path=None):
+	def evaluate(
+		self,
+		model,
+		sample_set='valid',
+		criterion=torch.nn.BCEWithLogitsLoss(),
+		save_path=None
+		):
 		'''
 		perform a evaluation of a model on validation set
 		params:
 			- model: model to evaluate
+			- sample_set: the set of data to evaluate model perfomance on, 'train', 'test', 'valid'
 			- criterion: object to calculate loss between target and model output
 			- save_path (optional): if provided the complete y_pred output will be stored at this file location
+
 		returns:
 			Dictionary object containing the results from test pass
 		'''
@@ -279,17 +299,24 @@ class GraphTrainer():
 			if sample_set == 'valid':
 				sample_loader = self.valid_loader
 			else:
-				raise Exception('trainer.evaluate(): sample_set "' + sample_set + '" not recognited')
-				
-			pred, loss, count = [], 0, 0
+				raise Exception('trainer.evaluate(): sample_set "' + sample_set + '" not recognited/implemented')
+			
+			# initialise evaluation trackers
+			pred = []
+			loss = []
+			count = 0
 
+			# loop through sample loader batches
 			for batch in sample_loader:
+
+				# calculate model prediction and loss
 				pred_y = model(batch.to(config.device))[:batch.batch_size]
 				loss += criterion(pred_y, batch.y[:batch.batch_size].to(torch.float)).item()
 				
 				pred.append(pred_y.cpu())
 				count += 1
 
+			# list of tensors to tensor of tensors
 			pred = torch.cat(pred, dim=0)
 
 			# loop over each sample set (train | valid | test) and calculate loss and ROC
@@ -299,6 +326,7 @@ class GraphTrainer():
 									'y_pred': pred,
 								})['rocauc']
 		
+			# save model predictins
 			if save_path:
 				torch.save(pred, save_path)	
 
@@ -320,6 +348,10 @@ class GraphTrainer():
 			- param_dict: a dictionary with keys of parameters and values of their search ranges
 			- criterion: method to evaluate model loss
 			- num_searches: how many hyperparamet searches to run
+			- num_epochs: number of epochs to use for each search
+
+		returns:
+			None
 		'''
 		param_types = ['lr', 'hid_dim', 'layers', 'dropout']
 		assert set(param_dict.keys()) == set(param_types)
@@ -377,14 +409,30 @@ class GraphTrainer():
 			lr=0.01,
 			criterion=torch.nn.BCEWithLogitsLoss(),
 			):
+		'''
+		takes a set of models and runs them for model_runs amount of times and logs performance
+		params:
+			- models: list of model objects to run experiments on
+			- model_runs: number of times to run each model
+			- num_epochs: number of epochs for each run
+			- lr: initial learning rate
+			- criterion: criterion used for calculating loss
+
+		returns:
+			None
+		'''
 		
 		logs = []
 
+		# for each model in list
 		for i, m in enumerate(models):
 			print('E{0}'.format(i))
+			
+			# run model
 			m_logger = self.train(m, criterion, num_epochs=num_epochs, lr=lr, save_log=False, num_runs=model_runs)
-			logs.append(m_logger.logs)
 
+			# save logs to file
+			logs.append(m_logger.logs)
 			with open('logs/experiment_logs.json', 'w') as fp:
 				json.dump(logs, fp)
 

@@ -8,6 +8,12 @@ import itertools
 
 class Logger(object):
 	def __init__(self, info=None):
+		'''
+		class for storing the results from training and evaluating graph models
+		params:
+			- info (optional): a dictionary containing initialise informatio about the model and experimental enviroment
+		'''
+
 		self.logs = defaultdict(list)
 		self.logs['info'] = info
 
@@ -18,7 +24,14 @@ class Logger(object):
 		self.alt_col = 'crimson'
 
 	def log(self, results_dict):
-		# log information from a results dictionary
+		'''
+		log information from a results dict
+		params:
+			- results_dict: a dictionary with keys as the metric names and values as the value of that metric
+
+		returns:
+			None
+		'''
 
 		sample_sets = ['train', 'valid', 'test']
 
@@ -37,12 +50,24 @@ class Logger(object):
 		save a all logs to specificed filepath
 		params:
 			- filepath: path to save logs to, must end with .json
+
+		return:
+			- None
 		'''
 		assert filepath.endswith('.json')
 		with open(filepath, 'w') as fp:
 			json.dump(self.logs, fp)
 
 	def run_slice(self, run, run_list):
+		'''
+		calculates the starting and ending indicies of a desired run
+		params:
+			- run: integer indicating which run we want the range for
+			- run_list: an array of all the logged run lists
+
+		returns:
+			run_slice: slice object starting at the begining of a run and ending at is final step
+		'''
 		run_start = run_list.index(run)
 		run_end = len(run_list) - run_list[::-1].index(run)
 		run_slice = slice(run_start, run_end)
@@ -53,6 +78,10 @@ class Logger(object):
 		plot metrics from a specified run, if no run is specified then the best run (lowest valid loss) is plotted
 		params:
 			- run: run number to plot
+			- save_path: path to save plot to
+
+		returns:
+			None
 		'''
 		runs = self.logs['run']
 		
@@ -110,6 +139,9 @@ class Logger(object):
 		plot the results of a hyperparameter search
 		params:
 			- filepath: the location of the hyperparameter log files
+
+		returns:
+			None
 		'''
 
 		# load logs from file
@@ -141,6 +173,12 @@ class Logger(object):
 	def print(self, round_to=None):
 		'''
 		print overview of results from logs
+
+		params:
+			- round_to: (optional) the number of decimals to round metric results to
+
+		returns:
+			None, prints output to terminal
 		'''
 
 		# calculate how many runs to print
@@ -152,6 +190,7 @@ class Logger(object):
 		valid_losses, valid_rocs = [], []
 
 		for r in range(1, num_runs+1):
+			# TODO: rewrite to use run_slice() function instead of custom implementation
 			run_start = runs.index(r)
 			run_end = len(runs) - runs[::-1].index(r)
 
@@ -173,13 +212,14 @@ class Logger(object):
 		valid_loss_mean, valid_loss_std = np.mean(valid_losses), np.std(valid_losses)
 		valid_roc_mean, valid_roc_std = np.mean(valid_rocs), np.std(valid_rocs)		
 
+		# if round_to number suplied then round outputs to round_to many decimal places
 		if round_to:
 			train_loss_mean, train_loss_std = round(train_loss_mean, round_to), round(train_loss_std, round_to)
-		train_roc_mean, train_roc_std = round(train_roc_mean, round_to), round(train_roc_std, round_to)
-		valid_loss_mean, valid_loss_std = round(valid_loss_mean, round_to), round(valid_loss_std, round_to)
-		valid_roc_mean, valid_roc_std = round(valid_roc_mean, round_to), round(valid_roc_std, round_to)
+			train_roc_mean, train_roc_std = round(train_roc_mean, round_to), round(train_roc_std, round_to)
+			valid_loss_mean, valid_loss_std = round(valid_loss_mean, round_to), round(valid_loss_std, round_to)
+			valid_roc_mean, valid_roc_std = round(valid_roc_mean, round_to), round(valid_roc_std, round_to)
 
-
+		# print the results
 		print('Results from {0} runs'.format(num_runs))
 		print('Train mean loss {0} \pm {1}'.format(train_loss_mean, train_loss_std))
 		print('Train mean roc  {0} \pm {1}'.format(train_roc_mean, train_roc_std))
@@ -191,11 +231,22 @@ class Logger(object):
 		load a log file
 		params:
 			- filepath: path of file to load from
+		
+		returns:
+			- None
 		'''
 		with open(filepath) as fp:
 			self.logs = json.load(fp)
 
 	def mean_values(self, metric_list):
+		'''
+		calculate the mean values for each epoch from a metric list
+		params:
+			- metric list of the list of lists format [epochs[values]], a list of epochs and the corresponding metric values at those epochs
+
+		returns:
+			list of lists of format [mean[epoch]], the mean metric value for each epoch
+		'''
 		# pivot the metric list from runlist[epoch[value]] to epoch[runlist[value]] so that we can calculate the mean of the metrics values at each epoch across runs
 		epoch_metric = list(map(list, itertools.zip_longest(*metric_list, fillvalue=None)))
 		epoch_metric[2].append(None)
@@ -215,6 +266,10 @@ class Logger(object):
 		plot a singluar metric from over multiple runs with a mean line
 		params:
 			- metric: the name of the metric to plot
+			- save_path: (optional) path to save plot to
+
+		returns:
+			None
 		'''
 
 		# get the number of runs
@@ -262,6 +317,15 @@ class Logger(object):
 
 		
 	def plot_experiment_metric_curves(self, filepath, metric='valid_loss'):
+		'''
+		plot the results from each model from an experiment on the same graph
+		params:
+			- filepath: path of the experiment logs
+			- metric: the metric to plot
+
+		returns:
+			None
+		'''
 
 		# load experiment logs from file
 		with open(filepath) as json_file:
@@ -287,11 +351,21 @@ class Logger(object):
 		
 
 	def plot_experiment_comparison(self, filepath, metric='valid_loss', comparitor='trainable_parameters'):
+		'''
+		plot a scatter plot comparing two metrics, for example the validation loss against the number of trainable parameters
+		params:
+			- metric: the metric to plot
+			- comparitor: the metric to plot again
+
+		returns:
+			None
+		'''
 
 		# load experiment logs from file
 		with open(filepath) as json_file:
 			experiment_logs = json.load(json_file)
 
+		# if a big value is better or worse for this metric
 		if metric.endswith('loss'):
 			operator = min
 		else:
@@ -314,6 +388,14 @@ class Logger(object):
 
 	
 	def print_experiment(self, filepath):
+		'''
+		print the output from an experiment
+		params:
+			- filepath: the path of the experimental logs
+
+		returns:
+			None
+		'''
 		
 		with open(filepath) as json_file:
 			experiment_logs = json.load(json_file)

@@ -5,16 +5,6 @@ from torch_geometric.nn.dense.linear import Linear
 from torch_geometric.nn import GCNConv, SAGEConv, GATConv, TransformerConv
 
 class GNN(torch.nn.Module):
-	'''
-	General class for creating different kinds of Graph Neural Networks.
-	paramets:
-		- conv_type = the type of convolutional layer to use, e.g. 'GCN', 'SAGE', 'GAT'
-		- in_dim = the dimensionality of the input
-		- hid_dim = the dimensionality of the hidden dimensions of the network
-		- out_dim = the dimensionality of the output
-		- num_layers = the number of hidden layers to use between the input and output layers
-		- dropout = the dropout probability to use
-	'''
 	def __init__(
 			self,
 			conv_type = 'GCN',
@@ -25,6 +15,18 @@ class GNN(torch.nn.Module):
 			num_layers = 3,
 			dropout = 0.25,
 			):
+		'''
+		General class for creating different kinds of Graph Neural Networks.
+		paramets:
+			- conv_type: the type of convolutional layer to use, e.g. 'GCN', 'SAGE', 'GAT'
+			- propagation: the source of information to propagate, can be 'feature', 'label', or 'both'
+			- in_dim: the dimensionality of the input
+			- hid_dim: the dimensionality of the hidden dimensions of the network
+			- out_dim: the dimensionality of the output
+			- num_layers: the number of hidden layers to use between the input and output layers
+			- dropout: the dropout probability to use
+		'''
+
 		super(GNN, self).__init__()
 
 		# create a parameter dictionary to store information about the model, used for logging experiments
@@ -33,7 +35,6 @@ class GNN(torch.nn.Module):
 		
 		self.propagation = propagation
 		if self.propagation == 'both':
-			#self.lin_x = Linear(8, in_dim//2)
 			self.lin_label = Linear(112, 8, bias=False)
 	
 		# set the convolutional layer type to use in the model
@@ -67,7 +68,11 @@ class GNN(torch.nn.Module):
 		for layer in self.layers:
 			layer.reset_parameters()
 
+		if self.propagation == 'both':
+			self.lin_label.reset_parameters()
+
 	def forward(self, batch):
+		# initialise x depending on the propagation type
 		if self.propagation == 'feature':
 			x = batch.x
 		elif self.propagation == 'label' or self.propagation == 'both':
@@ -77,22 +82,25 @@ class GNN(torch.nn.Module):
 				label = batch.eval_masked_y
 
 			if self.propagation == 'both':
-				#x = self.lin_x(batch.x)
 				label = self.lin_label(label)
-
 				x = torch.cat([batch.x,label], dim=1)
-				#x = x + label
 			else:
 				x = label
 
 		elif self.propation == 'both':
 			raise NotImplemented
 
+		# for each layer of the network
 		for layer in self.layers[:-1]:
+
+			#pass input and apply activation and dropout
 			x = layer(x, batch.edge_index)
 			x = F.relu(x)
 			x = F.dropout(x, p=self.dropout, training=self.training)
+
+		# project to output dimension
 		x = self.layers[-1](x, batch.edge_index)
+
 		return x
 
 
