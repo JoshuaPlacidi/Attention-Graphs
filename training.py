@@ -41,9 +41,8 @@ class GraphTrainer():
 		self.label_mask_p = label_mask_p
 
 		# aggregate edge features using mean
-		x = scatter(graph.edge_attr, graph.edge_index[0], dim=0, dim_size=graph.num_nodes, reduce='mean')
-		self.graph.edge_attr = None
-		self.graph.x = x
+		features = scatter(graph.edge_attr, graph.edge_index[0], dim=0, dim_size=graph.num_nodes, reduce='mean')
+		self.graph.features = features
 		
 		# mask labels
 		self.graph.train_mask = self.label_mask(label_mask_p, mask_eval=True)
@@ -178,6 +177,11 @@ class GraphTrainer():
 
 			epoch_bar = tqdm(range(1, num_epochs+1))
 			for epoch in epoch_bar:
+
+				# generate new label masks
+				self.graph.train_mask = self.label_mask(self.label_mask_p, mask_eval=True)
+				self.graph.eval_mask = self.label_mask(0, mask_eval=True)
+
 				# perform a train pass
 				train_loss, train_roc = self.train_pass(model, optimizer, criterion)
 				current_lr = optimizer.param_groups[0]['lr']
@@ -249,15 +253,20 @@ class GraphTrainer():
 		for batch in self.train_loader:
 			optimizer.zero_grad()
 
+			ground_truths = batch.y[:batch.batch_size].clone()
+
+			# remove ground truth labels from batch to prevent label leakage
+			batch.y[:batch.batch_size] = torch.zeros_like(batch.y[:batch.batch_size])
+
 			# calculate output
-			pred_y = model(batch.to(config.device))[:batch.batch_size]
+			pred_y = model(batch)[:batch.batch_size].cpu()
 
 			# store predictions and ground truths
-			pred.append(pred_y.cpu())
-			gts.append(batch.y[:batch.batch_size])
+			pred.append(pred_y)
+			gts.append(ground_truths)
 
 			# update weights
-			loss = criterion(pred_y, batch.y[:batch.batch_size].to(torch.float))
+			loss = criterion(pred_y, ground_truths.float()).to(torch.float)
 			loss.backward()
 			optimizer.step()
 
@@ -265,6 +274,7 @@ class GraphTrainer():
 			count += 1
 
 		# evaluate the model predictions against ground truths
+
 		train_loss = total_loss / count
 		train_roc = self.evaluator.eval({
 									'y_true': torch.cat(gts, dim=0),
@@ -303,27 +313,32 @@ class GraphTrainer():
 			
 			# initialise evaluation trackers
 			pred = []
-			loss = []
+			gts = []
+			loss = 0
 			count = 0
 
 			# loop through sample loader batches
 			for batch in sample_loader:
 
-				# calculate model prediction and loss
-				pred_y = model(batch.to(config.device))[:batch.batch_size]
-				loss += criterion(pred_y, batch.y[:batch.batch_size].to(torch.float)).item()
-				
-				pred.append(pred_y.cpu())
-				count += 1
+				ground_truths = batch.y[:batch.batch_size].clone()
 
-			# list of tensors to tensor of tensors
-			pred = torch.cat(pred, dim=0)
+				# remove ground truth labels from batch to prevent label leakage
+				batch.y[:batch.batch_size] = torch.zeros_like(batch.y[:batch.batch_size])
+
+				# calculate model prediction and loss
+				pred_y = model(batch.to(config.device))[:batch.batch_size].cpu()
+				loss += criterion(pred_y, ground_truths.float()).item()
+				
+				pred.append(pred_y)
+				gts.append(ground_truths)
+
+				count += 1
 
 			# loop over each sample set (train | valid | test) and calculate loss and ROC
 			loss = loss / count
 			roc = self.evaluator.eval({
-									'y_true': self.graph.y[self.split_idx[sample_set]],
-									'y_pred': pred,
+									'y_true': torch.cat(gts, dim=0),
+									'y_pred': torch.cat(pred, dim=0),
 								})['rocauc']
 		
 			# save model predictins
@@ -406,7 +421,7 @@ class GraphTrainer():
 			models,
 			model_runs=5,
 			num_epochs=200,
-			lr=0.01,
+			lr=0.001,
 			criterion=torch.nn.BCEWithLogitsLoss(),
 			):
 		'''
