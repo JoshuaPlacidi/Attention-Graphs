@@ -235,6 +235,9 @@ class MultiPropLayer(MessagePassing):
 		out = self.self_attention(q, out_key, out, e, index, mask=mask)
 		
 		return out
+
+	def gcn(self, x_j, e):
+		return x_j * e
 		
 
 	def __repr__(self) -> str:
