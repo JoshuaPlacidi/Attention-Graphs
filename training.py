@@ -449,7 +449,11 @@ class GraphTrainer():
 		# print results
 		print('Best Params:', best_params, ' with best loss:', best_loss)
 
-		best_model = model(in_dim=8, hid_dim=best_params['hid_dim'], out_dim=112, num_layers=best_params['layers'], dropout=best_params['dropout'])
+		if conv_type:
+			best_model = model(conv_type=conv_type, in_dim=8, hid_dim=best_params['hid_dim'], out_dim=112, num_layers=best_params['layers'], dropout=best_params['dropout'])
+		else:
+			best_model = model(in_dim=8, hid_dim=best_params['hid_dim'], out_dim=112, num_layers=best_params['layers'], dropout=best_params['dropout'])
+		
 		best_model.load_state_dict(torch.load('best_model.pt'))
 		best_model.eval()
 		best_model.to(config.device)
