@@ -75,7 +75,7 @@ class GraphTrainer():
 
 		self.test_loader = NeighborLoader(
 								self.graph,
-								num_neighbors=[-1, 1],
+								num_neighbors=[-1, 4, 1],
 								batch_size=1,
 								replace=True,
 								directed=True,

@@ -116,7 +116,7 @@ class MultiPropLayer(MessagePassing):
 
 		# combination layers
 		self.lin_key_edge = Linear(edge_dim, attn_heads * out_dim)
-		self.lin_comb = Linear(out_dim*2, out_dim)
+		self.lin_comb = Linear(out_dim*3, out_dim)
 
 	def reset_parameters(self):
 		self.lin_feat_query.reset_parameters()
@@ -173,8 +173,6 @@ class MultiPropLayer(MessagePassing):
 		
 		out = self.lin_comb(out)
 
-		#out = m
-
 		return out
 
 	def message(
@@ -191,14 +189,14 @@ class MultiPropLayer(MessagePassing):
 		edge_k = self.lin_key_edge(edge_attr).view(-1, self.heads, self.out_dim)
 
 		# calculate feature messages
-		#feature_messages = self.self_attention(q=feat_q_i, k=feat_k_j, v=feat_v_j, e=edge_k, index=index)
+		feature_messages = self.self_attention(q=feat_q_i, k=feat_k_j, v=feat_v_j, e=edge_k, index=index)
 
 		# calculate label messages
 		label_messages = self.label_attention(q=feat_q_i, l=label_j, e=edge_k, mask=mask_j, index=index)
 		
-		#messages = torch.cat([feature_messages, label_messages], dim=-1)
+		messages = torch.cat([feature_messages, label_messages], dim=-1)
 
-		return label_messages #messages
+		return messages
 
 	def self_attention(self, q, k, v, e, index, mask=None):
 		# calculate raw attention scores
