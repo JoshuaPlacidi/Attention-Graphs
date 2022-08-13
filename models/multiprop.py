@@ -7,11 +7,12 @@ from torch import Tensor
 
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.nn.dense.linear import Linear
-from torch_geometric.utils import softmax
+from torch_geometric.utils import softmax, degree
 
 class MultiPropGNN(torch.nn.Module):
 	def __init__(
 			self,
+			label_head = 'gat', # propagation algorithm to use for propagating labels: gcn, gat, sage, tf
 			in_dim = 8,
 			hid_dim = 64,
 			out_dim = 112,
@@ -30,17 +31,19 @@ class MultiPropGNN(torch.nn.Module):
 		self.label_embedding_table = torch.nn.Parameter(torch.randn(out_dim, label_emb_dim))
 		self.label_embedding_table.required_grad = True
 
+		self.label_head = label_head
+
 		# construct layers	
 		self.layers = torch.nn.ModuleList()
 		self.layers.append(
-			MultiPropLayer(in_dim=in_dim, out_dim=hid_dim, dropout=dropout, label_embedding_table=self.label_embedding_table)
+			MultiPropLayer(label_head=label_head, in_dim=in_dim, out_dim=hid_dim, dropout=dropout, label_embedding_table=self.label_embedding_table)
 		)
 		for _ in range(num_layers - 2):
 			self.layers.append(
-				MultiPropLayer(in_dim=hid_dim, out_dim=hid_dim, dropout=dropout, label_embedding_table=self.label_embedding_table)
+				MultiPropLayer(label_head=label_head, in_dim=hid_dim, out_dim=hid_dim, dropout=dropout, label_embedding_table=self.label_embedding_table)
 			)
 		self.layers.append(
-			MultiPropLayer(in_dim=hid_dim, out_dim=out_dim, dropout=dropout, label_embedding_table=self.label_embedding_table)
+			MultiPropLayer(label_head=label_head, in_dim=hid_dim, out_dim=out_dim, dropout=dropout, label_embedding_table=self.label_embedding_table)
 		)
 
 		self.reset_parameters()
@@ -64,9 +67,10 @@ class MultiPropLayer(MessagePassing):
 
 	def __init__(
 		self,
-		in_dim: int,
-		out_dim: int,
-		label_embedding_table,
+		label_head = 'tf',
+		in_dim: int = 8,
+		out_dim: int = 64,
+		label_embedding_table = None,
 		attn_heads: int = 1,
 		dropout: float = 0.25,
 		edge_dim: int = 8,
@@ -77,6 +81,10 @@ class MultiPropLayer(MessagePassing):
 		kwargs.setdefault('aggr', 'add')
 		super(MultiPropLayer, self).__init__(node_dim=0, **kwargs)
 
+		if label_head not in ['tf', 'sage', 'gat', 'gcn']:
+			raise Exception("'{0} label head argument not recognized".format(label_head))
+
+		self.label_head = label_head
 		self.in_dim = in_dim
 		self.out_dim = out_dim
 		self.heads = attn_heads
@@ -92,8 +100,13 @@ class MultiPropLayer(MessagePassing):
 		self.lin_feat_value = Linear(in_dim, attn_heads * out_dim)
 		self.lin_feat_skip = Linear(in_dim, attn_heads * out_dim, bias=True)
 
-		# node label attention
-		self.lin_label_key = Linear(out_dim, out_dim)
+		# label propagation layers
+		if self.label_head == 'tf':
+			self.lin_label_key = Linear(out_dim, out_dim)
+		elif self.label_head == 'gat':
+			self.lin_alpha = Linear(2*out_dim, 1)
+		elif self.label_head == 'sage':
+			self.lin_message = Linear(out_dim, out_dim)
 
 		# inner label attention
 		self.lin_label_emb_to_out = Linear(self.label_embedding_table.shape[1], out_dim)
@@ -111,7 +124,12 @@ class MultiPropLayer(MessagePassing):
 		self.lin_feat_value.reset_parameters()
 		self.lin_feat_skip.reset_parameters()
 
-		self.lin_label_key.reset_parameters()
+		if self.label_head == 'tf':
+			self.lin_label_key.reset_parameters()
+		elif self.label_head == 'gat':
+			self.lin_alpha.reset_parameters()
+		elif self.label_head == 'sage':
+			self.lin_message.reset_parameters()
 
 		self.lin_label_in_to_k.reset_parameters()
 		self.lin_label_k_key.reset_parameters()
@@ -145,6 +163,9 @@ class MultiPropLayer(MessagePassing):
 				mask = mask,
 				size=None,
 			).squeeze()
+
+		if self.label_head == 'sage':
+			m = self.lin_message(m)
 
 		feature_skip = self.lin_feat_skip(batch.features)
 
@@ -230,14 +251,56 @@ class MultiPropLayer(MessagePassing):
 		out = k_labels * alpha.view(-1, self.label_k, 1)
 		out = out.sum(dim=1).view(-1, 1, self.out_dim)
 
-		# label self-attention at the node level
-		out_key = self.lin_label_key(out)
-		out = self.self_attention(q, out_key, out, e, index, mask=mask)
-		
+		# propagate labels
+		if self.label_head == 'tf':
+			out_key = self.lin_label_key(out)
+			out = self.self_attention(q, out_key, out, e, index, mask=mask)
+		elif self.label_head == 'gcn':
+			out = self.gcn(x_j=out, e=e, mask=mask)
+		elif self.label_head == 'gat':
+			out = self.gat(i=q, j=out, index=index, mask=mask)
+		elif self.label_head == 'sage':
+			out = self.sage(j=out, index=index, mask=mask)
+
 		return out
 
-	def gcn(self, x_j, e):
+	def gcn(self, x_j, e, mask=None):
+		if mask != None:
+			inverted_mask = (torch.ones_like(mask) - mask).unsqueeze(-1)
+			x_j = x_j * inverted_mask
 		return x_j * e
+
+	def gat(self, i, j, index, mask=None):
+		x = torch.cat([i, j], dim=-1)
+		alphas = self.lin_alpha(x)
+
+		if mask != None:
+			softmax_mask = mask * -1e6
+			softmax_mask += torch.ones_like(softmax_mask)
+			alphas = alphas * softmax_mask.unsqueeze(-1)
+
+		alphas = softmax(alphas, index)
+
+		out = j * alphas
+		return out
+
+	def sage(self, j, index, mask=None):
+		node_degrees = degree(index).cpu()
+
+		degree_spread = []
+		for idx in range(node_degrees.shape[0]):
+			d = int(node_degrees[idx].item())
+			degree_spread += [d] * d
+
+		degree_spread = torch.LongTensor(degree_spread).unsqueeze(-1).unsqueeze(-1).to(j.get_device())
+
+		j /= degree_spread
+
+		if mask != None:
+			inverted_mask = (torch.ones_like(mask) - mask).unsqueeze(-1)
+			j = j * inverted_mask
+
+		return j
 		
 
 	def __repr__(self) -> str:

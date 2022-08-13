@@ -72,6 +72,16 @@ class GraphTrainer():
 								shuffle=False,
 								input_nodes=split_idx['valid'],
 		)
+
+		self.test_loader = NeighborLoader(
+								self.graph,
+								num_neighbors=[-1, 1],
+								batch_size=1,
+								replace=True,
+								directed=True,
+								shuffle=False,
+								input_nodes=split_idx['test'],
+		)
 	
 	def label_mask(self, label_mask_p, mask_eval=True):
 		'''
@@ -119,15 +129,17 @@ class GraphTrainer():
 			total_params+=param
 		return total_params
 
-	def train(self,
-		   model,
-		   criterion,
-		   num_runs=1,
-		   num_epochs=10,
-		   lr=1e-3,
-		   use_scheduler=True,
-		   save_log=False,
-		   valid_step=5
+	def train(
+			self,
+			model,
+			criterion,
+			num_runs=1,
+			num_epochs=10,
+			lr=1e-3,
+			use_scheduler=True,
+			save_log=False,
+			valid_step=5,
+			return_state_dict=False
 		):
 		'''
 		train a model in full batch graph mode
@@ -160,6 +172,11 @@ class GraphTrainer():
 
 		print('Training config: {0}'.format(info))
 		logger = Logger(info=model.param_dict)
+
+		if return_state_dict:
+			best_state_dict = None
+			best_loss_across_runs = 10000
+		
 
 		# perform a new training experiement for each run, reseting the model parameters each time
 		for run in range(1, num_runs+1):
@@ -200,6 +217,9 @@ class GraphTrainer():
 					# construct a results dictionary to store training parameters and model performance metrics
 					valid_loss, valid_roc = self.evaluate(model, sample_set='valid', criterion=criterion)
 					results_dict['valid_loss'], results_dict['valid_roc'] = valid_loss, valid_roc
+
+					if return_state_dict and valid_loss < best_loss_across_runs:
+						best_state_dict = model.state_dict()
 				
 				# log results
 				logger.log(results_dict)
@@ -218,7 +238,7 @@ class GraphTrainer():
 					scheduler.step(results_dict['valid_loss'])
 
 					# exit training if the learning rate drops to low
-					if current_lr <= 1e-7:
+					if current_lr <= 1e-6:
 						break
 
 
@@ -229,7 +249,10 @@ class GraphTrainer():
 		# print logs
 		logger.print()
 
-		return logger
+		if return_state_dict:
+			return logger, best_state_dict
+		else:
+			return logger
 
 
 	def train_pass(self, model, optimizer, criterion):
@@ -308,6 +331,8 @@ class GraphTrainer():
 
 			if sample_set == 'valid':
 				sample_loader = self.valid_loader
+			elif sample_set == 'test':
+				sample_loader = self.test_loader
 			else:
 				raise Exception('trainer.evaluate(): sample_set "' + sample_set + '" not recognited/implemented')
 			
@@ -388,18 +413,21 @@ class GraphTrainer():
 				value = np.random.uniform(param_dict[p][0], param_dict[p][1], 1)[0]
 				
 				# convert the value to an int if nessassary
-				if p == 'hid_dim' or p == 'layers': value = int(value)
+				if p == 'hid_dim' or p == 'layers':
+					value = int(value)
+				elif p == 'lr':
+					value = float('0.' + ('0' * int(value)) + str(int(np.random.uniform(0, 9, 1)[0])))
 
 				params[p] = value
 
 			print('S {0}/{1}'.format(search, num_searches))
 
+			print('Test parameters:', params)
 			# initialise a modle with sample hyperparameters
-			m = model(in_dim=self.graph.num_features, hid_dim=params['hid_dim'], out_dim=112,
-						num_layers=params['layers'], dropout=params['dropout'])
+			m = model(in_dim=8, hid_dim=params['hid_dim'], out_dim=112, num_layers=params['layers'], dropout=params['dropout'])
 
 			# initialise training strategy with sampled hyperparameters
-			m_logger = self.train(m, criterion, num_epochs=num_epochs, lr=params['lr'], save_log=True)
+			m_logger, state_dict = self.train(m, criterion, num_epochs=num_epochs, lr=params['lr'], save_log=True, return_state_dict=True)
 			logs.append(m_logger.logs)
 			
 			# if model is best so far, save its parameters
@@ -407,6 +435,7 @@ class GraphTrainer():
 			if m_loss < best_loss:
 				best_loss = m_loss
 				best_params = params
+				torch.save(state_dict, 'best_model.pt')
 			
 			# store hyperparameter logs
 			with open('hyperparam_search.json', 'w') as fp:
@@ -415,11 +444,20 @@ class GraphTrainer():
 		# print results
 		print('Best Params:', best_params, ' with best loss:', best_loss)
 
+		best_model = model(in_dim=8, hid_dim=best_params['hid_dim'], out_dim=112, num_layers=best_params['layers'], dropout=best_params['dropout'])
+		best_model.load_state_dict(torch.load('best_model.pt'))
+		best_model.eval()
+		best_model.to(config.device)
+		test_loss, test_roc = self.evaluate(best_model, sample_set='test', criterion=criterion)
+
+		print('test_loss', test_loss)
+		print('test_roc', test_roc)
+
 	
 	def run_experiment(
 			self,
 			models,
-			model_runs=5,
+			model_runs=1,
 			num_epochs=200,
 			lr=0.001,
 			criterion=torch.nn.BCEWithLogitsLoss(),
