@@ -332,7 +332,7 @@ class GraphTrainer():
 			if sample_set == 'valid':
 				sample_loader = self.valid_loader
 			elif sample_set == 'test':
-				sample_loader = self.test_loader
+				sample_loader = tqdm(self.test_loader)
 			else:
 				raise Exception('trainer.evaluate(): sample_set "' + sample_set + '" not recognited/implemented')
 			
