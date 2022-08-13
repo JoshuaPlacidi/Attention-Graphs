@@ -379,6 +379,7 @@ class GraphTrainer():
 			criterion=torch.nn.BCEWithLogitsLoss(),
 			num_searches=10,
 			num_epochs=200,
+			conv_type=None,
 			):
 		'''
 		performs a hyperparameter search over a range of values, each search randomly selects
@@ -423,8 +424,12 @@ class GraphTrainer():
 			print('S {0}/{1}'.format(search, num_searches))
 
 			print('Test parameters:', params)
+
 			# initialise a modle with sample hyperparameters
-			m = model(in_dim=8, hid_dim=params['hid_dim'], out_dim=112, num_layers=params['layers'], dropout=params['dropout'])
+			if conv_type:
+				m = model(conv_type=conv_type, in_dim=8, hid_dim=params['hid_dim'], out_dim=112, num_layers=params['layers'], dropout=params['dropout'])
+			else:
+				m = model(in_dim=8, hid_dim=params['hid_dim'], out_dim=112, num_layers=params['layers'], dropout=params['dropout'])
 
 			# initialise training strategy with sampled hyperparameters
 			m_logger, state_dict = self.train(m, criterion, num_epochs=num_epochs, lr=params['lr'], save_log=True, return_state_dict=True)
