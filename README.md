@@ -3,7 +3,7 @@
 
   [Joshua Placidi](https://www.linkedin.com/in/joshua-placidi/), [John Pate](https://www.linkedin.com/in/john-pate-07451526/), [Tania Bakhos](https://www.linkedin.com/in/tania-bakhos-745b13172/), [Pawel Pomorski](https://www.linkedin.com/in/pawel-pomorski-90754910b/)
 
-This work was conducted as the thesis component of my (Joshua Placidi) Masters degree in Artifical Intelligence at The University of Edinburgh in collaboration with Amazon UK, the project supervisors were John Pate, Tania, Bakhos, and Pawel Pamorski.
+This work was conducted as the thesis component of my (Joshua Placidi) Masters degree in Artifical Intelligence at The University of Edinburgh, the project supervisors were John Pate, Tania, Bakhos, and Pawel Pamorski at Amazon.
 
 ***
 
